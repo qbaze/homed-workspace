@@ -1,0 +1,25 @@
+post_install() {
+    systemd-tmpfiles --create homed-workspace.tmpfiles >/dev/null 2>&1 || true
+    cat <<'MSG'
+
+==> homed-workspace installed.
+
+    The `runas` command works right away (linger and audio self-configure on
+    first use). Requirement: your account must be in the `wheel` group.
+
+    To enable single-password keyring unlock AND automatic client logout when you
+    log out, run this EXPLICITLY (the package does not touch foreign PAM files by
+    itself):
+
+        sudo homed-workspace-setup        # undo: sudo homed-workspace-setup --undo
+
+    Then log out and back in once. Details: /usr/share/doc/homed-workspace/README.md
+MSG
+}
+post_upgrade() {
+    systemd-tmpfiles --create homed-workspace.tmpfiles >/dev/null 2>&1 || true
+}
+post_remove() {
+    echo "==> If you enabled the PAM integration, undo it: sudo homed-workspace-setup --undo"
+    echo "    (run BEFORE removing the package, or strip the PAM blocks manually)."
+}

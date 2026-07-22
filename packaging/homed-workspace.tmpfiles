@@ -1,0 +1,5 @@
+# Dedicated directory for the clients' shared audio sockets.
+# Sticky (like /tmp) but separate — no collision with the rest of the system, and
+# a root-owned parent prevents tampering with other users' entries. The socket
+# inside is created by the main user's pipewire; runas then chmods it to 0666.
+d /run/homed-workspace 1777 root root -

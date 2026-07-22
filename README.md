@@ -1,75 +1,89 @@
-# runas-workspace
+# homed-workspace
 
-Izolowane środowiska pracy per klient na Arch Linux: każdy klient to osobny
-użytkownik `systemd-homed` (szyfrowany katalog domowy), zmapowany na workspace
-XFCE o tej samej nazwie. Komendy uruchamiane na danym workspace lecą jako
-dedykowany użytkownik — z dźwiękiem, keyringiem i bez ciągłego pytania o hasło.
+Per-client isolated work environments on Arch Linux: each client is a separate
+`systemd-homed` user (encrypted home), mapped to an XFCE workspace of the same
+name. Commands launched on a given workspace run as that dedicated user — with
+audio, keyring, and without constant password prompts.
 
-> **Zakres:** XFCE + X11 + systemd-homed. To osobisty workflow ubrany w pakiet,
-> nie uniwersalne narzędzie. Nie działa na Wayland/GNOME/KDE bez przeróbek.
-
-## Jak to działa
-
-`su -l <klient>` przechodzi pełny stack PAM: aktywuje szyfrowany home, odblokowuje
-keyring i stawia sesję usera. `enable-linger` utrzymuje ją przy życiu, więc kolejne
-komendy wstrzykiwane przez `machinectl shell` trafiają do żywej sesji — bez hasła,
-z działającym audio i keyringiem. Hasło pada raz na klienta na boot (to klucz
-szyfrowania jego home).
-
-## Instalacja (AUR / lokalnie)
+The command you actually run is `runas`:
 
 ```bash
-# z AUR (po opublikowaniu):
-#   yay -S runas-workspace-git
-# lokalnie z repo:
+runas firefox        # on workspace 'clientA' -> Firefox as user clientA
+```
+
+> **Scope:** XFCE + X11 + systemd-homed. This is a personal workflow packaged up,
+> not a general-purpose tool. It won't work on Wayland/GNOME/KDE without changes.
+
+## How it works
+
+`su -l <client>` runs the full PAM stack: it activates the encrypted home, unlocks
+the keyring, and sets up the user session. `enable-linger` keeps that session
+alive, so subsequent commands injected via `machinectl shell` land in a live
+session — no password, working audio and keyring. The password is entered once per
+client per boot (it is the home encryption key).
+
+## Install
+
+```bash
+# from the AUR (once published):
+#   yay -S homed-workspace-git
+# locally from the repo:
 makepkg -si
 ```
 
-Warunek: jesteś w grupie `wheel` (na tym opiera się autoryzacja polkit; taki user
-i tak może `sudo su - X`, więc to nie dodaje uprawnień).
+Requirement: your account is in the `wheel` group (polkit authorisation relies on
+it; such a user can already `sudo su - X`, so this grants no new privilege).
 
-Wrapper i audio działają od razu. Aby włączyć **odblokowanie keyringa jednym
-hasłem** oraz **auto-wylogowanie klientów** przy Twoim logout, odpal jawnie:
-
-```bash
-sudo runas-setup            # odwrotnie: sudo runas-setup --undo
-```
-
-Ta komenda dopina moduły PAM (`/etc/pam.d/su` + PAM Twojego display managera).
-Pakiet **nie** robi tego sam podczas instalacji — nie modyfikuje plików należących
-do innych pakietów bez Twojej jawnej zgody. Wszystkie dopinane moduły są `optional`,
-więc nie mogą zablokować logowania.
-
-## Użycie
+The `runas` command and audio work immediately. To enable **single-password
+keyring unlock** and **automatic client logout** when you log out, run explicitly:
 
 ```bash
-runas firefox        # na workspace 'klientA' -> Firefox jako klientA
+sudo homed-workspace-setup            # reverse: sudo homed-workspace-setup --undo
 ```
 
-Pierwszy raz wyskoczy pytanie o hasło klienta; potem cicho.
+This wires the PAM modules (`/etc/pam.d/su` + your display manager's PAM). The
+package does **not** do this during installation — it does not modify files owned
+by other packages without your explicit consent. Every module it adds is
+`optional`, so it cannot lock you out of login.
 
-## Bezpieczeństwo — czytaj
+## Security — read this
 
-To **granica UID**, nie sandbox. Chroni pliki, keyring i profil per klient (osobny
-szyfrowany home). Ale:
+This is a **UID boundary, not a sandbox.** It protects files, keyring and profile
+per client (separate encrypted homes). However:
 
-- **X11 nie izoluje klientów.** `runas` wpuszcza usera klienta do Twojego serwera X
-  przez `xhost +si:localuser:` (least-privilege, nie `xhost +`), i cofa to przy
-  wylogowaniu. Mimo to, dopóki dostęp jest nadany, proces klienta może teoretycznie
-  podsłuchiwać klawiaturę / zrzucać ekran innych okien. Jeśli potrzebujesz twardej
-  izolacji wyświetlania — docelowo Wayland lub xpra per user.
-- **Wspólny socket audio** (`/run/runas/pulse-<uid>`, `client.access=unrestricted`)
-  jest osiągalny dla innych lokalnych UID-ów. W modelu „wszyscy userzy to Twoje
-  własne konta" to nieistotne; w środowisku z obcymi użytkownikami lokalnymi —
-  rozważ wyłączenie audio lub tunel per sesja.
+- **X11 does not isolate clients.** `runas` grants the client user access to your X
+  server via `xhost +si:localuser:` (least-privilege, not `xhost +`) and revokes it
+  on logout. While access is granted, a client process can in principle log
+  keystrokes or capture other windows. If you need hard display isolation, look at
+  Wayland or xpra-per-user.
+- **The shared audio socket** (`/run/homed-workspace/pulse-<uid>`,
+  `client.access=unrestricted`) is reachable by other local UIDs. In the "all users
+  are your own accounts" model this is irrelevant; on a box with untrusted local
+  users, disable audio or tunnel it per session.
 
-## Odinstalowanie
+## Commands
+
+| command | purpose |
+|---|---|
+| `runas <cmd>` | run `<cmd>` as the client owning the current workspace |
+| `homed-workspace-setup [--undo]` | enable/disable the PAM integration |
+| `homed-workspace-logout` | tear down client sessions (also runs on your logout) |
+
+## Uninstall
 
 ```bash
-sudo runas-setup --undo     # najpierw cofnij integrację PAM
-sudo pacman -R runas-workspace-git
+sudo homed-workspace-setup --undo     # undo the PAM integration first
+sudo pacman -R homed-workspace-git
 ```
 
-## Licencja
+## Caveats
+
+- **homed + linger can be finicky** — after long inactivity homed may deactivate a
+  home and the client will ask for its password again.
+- **A `util-linux` upgrade** may overwrite `/etc/pam.d/su` with a `.pacnew`, dropping
+  our block. Because the modules are `optional` this degrades gracefully (keyring
+  won't auto-unlock, everything else works); rerun `homed-workspace-setup`.
+
+## License
 
 MIT.

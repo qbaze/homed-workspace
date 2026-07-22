@@ -1,0 +1,13 @@
+// Members of `wheel` may inject into client sessions, activate/deactivate their
+// homes and enable linger — without a polkit admin password prompt.
+// `wheel` because such a user can already `sudo su - X`: no escalation, no extra group.
+polkit.addRule(function(action, subject) {
+    if (subject.isInGroup("wheel") &&
+        (action.id == "org.freedesktop.machine1.shell" ||
+         action.id == "org.freedesktop.machine1.login" ||
+         action.id == "org.freedesktop.home1.activate-home" ||
+         action.id == "org.freedesktop.home1.deactivate-home" ||
+         action.id == "org.freedesktop.login1.set-user-linger")) {
+        return polkit.Result.YES;
+    }
+});

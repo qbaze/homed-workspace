@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# runas-logout-all — ubij sesje klientów homed i zdeaktywuj ich home.
-# Odpalane jako root z pam_exec (close_session głównego usera). Bezpieczne ręcznie.
+# homed-workspace-logout — terminate client homed sessions and deactivate their
+# encrypted homes. Runs as root from pam_exec (close_session of the main user).
+# Safe to run manually: sudo homed-workspace-logout
 set -uo pipefail
 
 if [[ -n ${PAM_TYPE:-} && ${PAM_TYPE} != close_session ]]; then exit 0; fi
@@ -11,7 +12,7 @@ mapfile -t users < <(homectl list --no-legend 2>/dev/null | awk '{print $1}')
 drop=(); for u in "${users[@]}"; do [[ $u == "$KEEP" ]] || drop+=("$u"); done
 [[ ${#drop[@]} -gt 0 ]] || exit 0
 
-# cofnij dostęp X, który runas nadał klientom (least-privilege sprzątanie)
+# Revoke the X access runas granted to clients (least-privilege cleanup)
 for u in "${drop[@]}"; do xhost "-si:localuser:$u" 2>/dev/null || true; done
 
 for u in "${drop[@]}"; do loginctl terminate-user "$u" 2>/dev/null || true; done
