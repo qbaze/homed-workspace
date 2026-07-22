@@ -1,0 +1,13 @@
+[Unit]
+Description=homed-workspace: notify on workspace change
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/homed-workspace-notify
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

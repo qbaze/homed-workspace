@@ -1,35 +1,21 @@
 #!/usr/bin/env bash
 # runas — run a command as the systemd-homed client user that owns the current
-# XFCE workspace.
-#
-# Model: one password login per client per boot (activates the encrypted home
-# AND unlocks the keyring via PAM); linger keeps the session alive; every later
-# command is injected into that live session with `machinectl shell` — no further
-# password prompts, with working audio and keyring. Linger and audio self-configure
-# on first use.
-
+# workspace. Model: one password login per client per boot (activates encrypted
+# home AND unlocks keyring); linger keeps the session; later commands are injected
+# via `machinectl shell` — no password, working audio/keyring. Linger and audio
+# self-configure on first use.
 set -euo pipefail
 
-RUNAS_DIR=/run/homed-workspace          # dedicated dir (tmpfiles.d, sticky)
+_LIB=/usr/lib/homed-workspace/lib.sh
+[[ -r $_LIB ]] || _LIB="$(dirname "$(readlink -f "$0")")/lib/lib.sh"
+# shellcheck source=/dev/null
+source "$_LIB"   # provides is_client, current_ws (backend-switched)
+
+RUNAS_DIR=/run/homed-workspace
 me=$(id -un); myuid=$(id -u)
-SOCK="${RUNAS_DIR}/pulse-${myuid}"       # audio socket unique to your UID
+SOCK="${RUNAS_DIR}/pulse-${myuid}"
 ANCHOR_MARK="homed-workspace-anchor"
 
-current_ws() {
-  local cur; cur=$(xdotool get_desktop) || return 1
-  # take fields from 10 onward -> robust to multi-monitor 'WA:' shifting
-  wmctrl -d | awk -v c="$cur" '$1==c{s="";for(i=10;i<=NF;i++)s=s(i>10?" ":"")$i;print s}'
-}
-is_client() {
-  local line uid shell
-  line=$(getent passwd "$1") || return 1
-  uid=$(cut -d: -f3 <<<"$line"); shell=$(cut -d: -f7 <<<"$line")
-  [[ $uid -ge 1000 && $uid -lt 65000 && $shell =~ (bash|zsh|fish)$ ]]
-}
-
-# Audio: generate a per-user pipewire-pulse drop-in; the socket is your own file,
-# so you may fix its permissions yourself. Path lives under /run/homed-workspace
-# (root-owned, sticky) rather than bare /tmp.
 ensure_audio() {
   local dropin="$HOME/.config/pipewire/pipewire-pulse.conf.d/20-homed-workspace.conf"
   if [[ ! -e $dropin ]]; then
@@ -51,13 +37,12 @@ CONF
   fi
 }
 
-target=$(current_ws || true)
+target=$(current_ws 2>/dev/null || true)
 if [[ -z ${target:-} || $target == "$me" ]] || ! is_client "$target"; then
   exec "$@"
 fi
 tuid=$(id -u "$target")
 
-# Linger: enable once, lazily (polkit authorises wheel for set-user-linger)
 if ! loginctl show-user "$target" -p Linger --value 2>/dev/null | grep -qx yes; then
   loginctl enable-linger "$target" 2>/dev/null || true
 fi
@@ -66,9 +51,6 @@ session_up() {
   loginctl list-sessions --no-legend 2>/dev/null | awk '{print $3}' | grep -qxF "$target"
 }
 if ! session_up; then
-  # The only password prompt (it is the home encryption key). `su -l` runs the
-  # full PAM stack, so with the PAM integration enabled (see homed-workspace-setup)
-  # it also unlocks the keyring in the same step.
   xfce4-terminal -T "$ANCHOR_MARK: $target" -e \
     "su -l \"$target\" -c \"echo '[$target] home + keyring unlocked'; exec sleep infinity\""
   for _ in $(seq 1 50); do session_up && break; sleep 0.3; done

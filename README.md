@@ -61,6 +61,26 @@ per client (separate encrypted homes). However:
   are your own accounts" model this is irrelevant; on a box with untrusted local
   users, disable audio or tunnel it per session.
 
+## Workspace-change notifications (optional)
+
+A small service pops a desktop notification with the workspace name whenever you
+switch — handy since the workspace name is the client you're about to act as. It
+is **event-driven** where the WM supports it (X11 via the `_NET_CURRENT_DESKTOP`
+root property with `xprop -spy`; Sway via `swaymsg subscribe`) and falls back to
+light polling elsewhere. All of that is hidden behind `watch_ws()` in the shared
+library, so it works the same across window managers.
+
+Opt-in, per user (no root):
+
+```bash
+systemctl --user enable --now homed-workspace-notify.service
+```
+
+Needs `libnotify` (for `notify-send`); on X11, `xorg-xprop` upgrades it from
+polling to true events. If your desktop doesn't export `DISPLAY` into the systemd
+user manager, add once to your session startup:
+`dbus-update-activation-environment --systemd DISPLAY XAUTHORITY`.
+
 ## Commands
 
 | command | purpose |
@@ -68,6 +88,14 @@ per client (separate encrypted homes). However:
 | `runas <cmd>` | run `<cmd>` as the client owning the current workspace |
 | `homed-workspace-setup [--undo]` | enable/disable the PAM integration |
 | `homed-workspace-logout` | tear down client sessions (also runs on your logout) |
+| `homed-workspace-notify` | notify on workspace change (run via the `--user` service) |
+
+## Portability
+
+Workspace detection and change-watching live in `/usr/lib/homed-workspace/lib.sh`
+(`current_ws` / `watch_ws`), backend-switched per WM: X11 (wmctrl/xprop) today,
+with Sway (swaymsg) and Hyprland (hyprctl) branches in place. Adding a WM means
+filling one branch — the commands on top don't change.
 
 ## Uninstall
 

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# homed-workspace-notify — desktop notification on every workspace change.
+# Event-driven on X11 (xprop -spy) / Sway (swaymsg subscribe), polling fallback
+# elsewhere — all hidden behind watch_ws() in the shared library. Meant to run as
+# a `systemctl --user` service (opt-in).
+set -uo pipefail
+
+_LIB=/usr/lib/homed-workspace/lib.sh
+[[ -r $_LIB ]] || _LIB="$(dirname "$(readlink -f "$0")")/lib/lib.sh"
+# shellcheck source=/dev/null
+source "$_LIB"
+
+# systemd --user services may lack session env; best-effort defaults for X11.
+export DISPLAY="${DISPLAY:-:0}"
+
+last=""
+watch_ws | while read -r _; do
+  name=$(current_ws 2>/dev/null || true)
+  [[ -n $name && $name != "$last" ]] || continue
+  last=$name
+  notify-send -a homed-workspace -u low "Workspace" "$name" 2>/dev/null || true
+done

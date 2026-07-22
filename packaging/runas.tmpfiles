@@ -1,5 +1,0 @@
-# Dedykowany katalog na wspólne sockety audio klientów.
-# Sticky (jak /tmp), ale osobny — brak kolizji z resztą systemu, root jako właściciel
-# katalogu uniemożliwia podmianę cudzych wpisów. Socket w środku tworzy pipewire
-# głównego usera, a runas nadaje mu 0666.
-d /run/runas 1777 root root -
