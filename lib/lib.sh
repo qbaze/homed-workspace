@@ -5,12 +5,24 @@
 [[ -n ${_HOMED_WORKSPACE_LIB:-} ]] && return 0
 _HOMED_WORKSPACE_LIB=1
 
-# --- is $1 a real client login (homed user with a login shell)? --------------
+# --- is $1 a real client login? --------------------------------------------
+# A homed user is the ground truth. Do NOT rely on the login shell: when the
+# encrypted home is inactive, homed substitutes 'systemd-home-fallback-shell',
+# so a bash/zsh/fish check would reject exactly the users we need to activate.
+# Prefer asking homed directly; fall back to a uid-range + shell heuristic only
+# if homectl is unavailable.
 is_client() {
+  local u=$1
+  if command -v homectl >/dev/null 2>&1; then
+    homectl list --no-legend 2>/dev/null | awk '{print $1}' | grep -qxF "$u" && return 0
+    return 1
+  fi
+  # fallback (no homed tooling): uid in the homed range with a login-ish shell,
+  # accepting the fallback shell too.
   local line uid shell
-  line=$(getent passwd "$1") || return 1
+  line=$(getent passwd "$u") || return 1
   uid=$(cut -d: -f3 <<<"$line"); shell=$(cut -d: -f7 <<<"$line")
-  [[ $uid -ge 1000 && $uid -lt 65000 && $shell =~ (bash|zsh|fish)$ ]]
+  [[ $uid -ge 1000 && $uid -lt 65536 && $shell =~ (bash|zsh|fish|systemd-home-fallback-shell)$ ]]
 }
 
 # --- detect the active WM backend --------------------------------------------
