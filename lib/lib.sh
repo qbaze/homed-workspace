@@ -27,9 +27,9 @@ _ws_x11() {
   # index: prefer xdotool (robust), else the row marked active with '*'
   if command -v xdotool >/dev/null 2>&1; then idx=$(xdotool get_desktop 2>/dev/null); fi
   if [[ -n ${idx:-} ]]; then
-    wmctrl -d | awk -v i="$idx" '$1==i{s="";for(k=10;k<=NF;k++)s=s(k>10?" ":"")$k;print s}'
+    wmctrl -d | awk -v i="$idx" '$1==i{name=$10;for(k=11;k<=NF;k++)name=name" "$k;print name}'
   else
-    wmctrl -d | awk '$2=="*"{s="";for(k=10;k<=NF;k++)s=s(k>10?" ":"")$k;print s}'
+    wmctrl -d | awk '$2=="*"{name=$10;for(k=11;k<=NF;k++)name=name" "$k;print name}'
   fi
 }
 _ws_sway()     { swaymsg -t get_workspaces 2>/dev/null | grep -o '"name":"[^"]*","focused":true' | head -1 | sed 's/.*"name":"\([^"]*\)".*/\1/'; }

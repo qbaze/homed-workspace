@@ -1,11 +1,11 @@
 # Maintainer: Your Name <you@example.com>
 pkgname=homed-workspace-git
 _pkgname=homed-workspace
-pkgver=0.0.0
+pkgver=0.0.0.r4.gca550d7
 pkgrel=1
 pkgdesc="Run commands as the systemd-homed user matching your current workspace (one homed account per client)"
 arch=('any')
-url="https://github.com/USER/homed-workspace"
+url="https://github.com/qbaze/homed-workspace"
 license=('MIT')
 depends=('bash' 'systemd' 'polkit' 'wmctrl' 'xorg-xhost' 'xfce4-terminal')
 optdepends=('pipewire-pulse: shared audio socket for client sessions (auto-configured)'
@@ -19,13 +19,17 @@ makedepends=('git')
 provides=('homed-workspace')
 conflicts=('homed-workspace')
 install="${_pkgname}.install"
-source=("${_pkgname}::git+https://github.com/USER/homed-workspace.git")
+source=("${_pkgname}::git+https://github.com/qbaze/homed-workspace.git")
 sha256sums=('SKIP')
 
 pkgver() {
     cd "$srcdir/$_pkgname"
-    git describe --long --tags 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' \
-      || printf '0.0.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+    local v
+    if v=$(git describe --long --tags 2>/dev/null); then
+        printf '%s' "$v" | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+    else
+        printf '0.0.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+    fi
 }
 
 package() {
