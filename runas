@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # runas — run a command as the systemd-homed client user that owns the current
-# workspace. Model: one password login per client per boot (activates encrypted
-# home AND unlocks keyring); linger keeps the session; later commands are injected
-# via `machinectl shell` — no password, working audio/keyring. Linger and audio
-# self-configure on first use.
+# workspace. Model: the client's encrypted home is activated once per boot (one
+# password, via `homectl activate` in a terminal); linger keeps user@UID.service
+# alive; later commands are injected via `machinectl shell` — no password, with
+# working audio. Linger and audio self-configure on first use.
+#
+# NOTE: this activates the home but does NOT unlock the login keyring (that needs
+# a password-carrying PAM login, which neither `machinectl shell` nor `homectl
+# activate` provide). See README (Keyring) for the recommended app-side approach.
 set -euo pipefail
 
 _LIB=/usr/lib/homed-workspace/lib.sh
@@ -14,7 +18,7 @@ source "$_LIB"   # provides is_client, current_ws (backend-switched)
 RUNAS_DIR=/run/homed-workspace
 me=$(id -un); myuid=$(id -u)
 SOCK="${RUNAS_DIR}/pulse-${myuid}"
-ANCHOR_MARK="homed-workspace-anchor"
+ACTIVATE_MARK="homed-workspace-activate"
 
 ensure_audio() {
   local dropin="$HOME/.config/pipewire/pipewire-pulse.conf.d/20-homed-workspace.conf"
@@ -63,7 +67,7 @@ case "$(home_state)" in
   *)                                           # inactive / dirty -> activate it
     # Needs a tty for the password prompt (runas is launched from a keybind, not a
     # terminal). homectl activate mounts the home and exits; the mount persists.
-    xfce4-terminal -T "$ANCHOR_MARK: $target" -x homectl activate "$target"
+    xfce4-terminal -T "$ACTIVATE_MARK: $target" -x homectl activate "$target"
     for _ in $(seq 1 100); do [[ $(home_state) == active ]] && break; sleep 0.3; done
     [[ $(home_state) == active ]] || {
       echo "runas: home for '$target' did not become active" >&2; exit 1; }

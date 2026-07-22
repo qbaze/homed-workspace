@@ -1,7 +1,7 @@
 # Maintainer: Your Name <you@example.com>
 pkgname=homed-workspace-git
 _pkgname=homed-workspace
-pkgver=0.0.0.r6.ga8bc237
+pkgver=0.0.0.r7.g4692c09
 pkgrel=1
 pkgdesc="Run commands as the systemd-homed user matching your current workspace (one homed account per client)"
 arch=('any')
@@ -9,7 +9,6 @@ url="https://github.com/qbaze/homed-workspace"
 license=('MIT')
 depends=('bash' 'systemd' 'polkit' 'wmctrl' 'xorg-xhost' 'xfce4-terminal')
 optdepends=('pipewire-pulse: shared audio socket for client sessions (auto-configured)'
-            'gnome-keyring: per-client secret unlock (enable via homed-workspace-setup)'
             'libnotify: workspace-change notifications (homed-workspace-notify)'
             'xorg-xprop: event-driven workspace notifications on X11 (else polling)'
             'xdotool: more robust active-workspace detection on X11'

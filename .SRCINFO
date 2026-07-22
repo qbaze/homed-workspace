@@ -13,7 +13,6 @@ pkgbase = homed-workspace-git
 	depends = xorg-xhost
 	depends = xfce4-terminal
 	optdepends = pipewire-pulse: shared audio socket for client sessions (auto-configured)
-	optdepends = gnome-keyring: per-client secret unlock (enable via homed-workspace-setup)
 	optdepends = libnotify: workspace-change notifications (homed-workspace-notify)
 	optdepends = xorg-xprop: event-driven workspace notifications on X11 (else polling)
 	optdepends = xdotool: more robust active-workspace detection on X11

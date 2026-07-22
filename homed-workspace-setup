@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
-# homed-workspace-setup — EXPLICITLY (with your consent) wire up PAM integration:
-#   * /etc/pam.d/su        : keyring + systemd (all `optional` modules)
-#   * display manager PAM  : client logout hook
+# homed-workspace-setup — EXPLICITLY (with your consent) install the client-logout
+# hook into your display manager's PAM stack, so that when you log out, all client
+# homed sessions are torn down and their encrypted homes deactivated.
+#
 # This does NOT run during the pacman transaction — you invoke it yourself.
-# Everything is idempotent and reversible:  sudo homed-workspace-setup [--undo]
+# Idempotent and reversible:  sudo homed-workspace-setup [--undo]
+#
+# NOTE: this no longer touches /etc/pam.d/su. The old su/PAM keyring hook was tied
+# to an `su -l` anchor that does not work with systemd-homed ("Called without
+# reference on home taken"), so runas now activates homes via `homectl activate`.
+# Automatic keyring unlock is therefore not wired here; see README (Keyring).
 set -euo pipefail
 [[ $EUID -eq 0 ]] || { echo "run as root: sudo homed-workspace-setup [--undo]" >&2; exit 1; }
 
@@ -21,19 +27,15 @@ add() {  # $1=file $2=body
 del() { [[ -f $1 ]] && sed -i "/$B/,/$E/d" "$1" && echo "  cleaned: $1"; }
 
 if [[ ${1:-} == --undo ]]; then
-  echo "Removing PAM integration:"
+  echo "Removing the logout hook:"
+  # also strip the legacy /etc/pam.d/su block, in case an older version added it
   del /etc/pam.d/su
   d=$(dm_pam); [[ -n $d ]] && del "$d"
   echo "Done. (client linger left intact: loginctl disable-linger <user>)"
   exit 0
 fi
 
-echo "Wiring PAM integration ('optional' modules — cannot cause lockout):"
-add /etc/pam.d/su \
-"auth       optional   pam_gnome_keyring.so
-session    optional   pam_systemd.so
-session    optional   pam_gnome_keyring.so auto_start"
-
+echo "Installing the client-logout hook:"
 d=$(dm_pam)
 if [[ -n $d ]]; then
   add "$d" "session    optional   pam_exec.so /usr/bin/homed-workspace-logout"
@@ -41,4 +43,9 @@ else
   echo "  !! no display manager detected — add the logout hook to your DM's PAM manually:"
   echo "     session optional pam_exec.so /usr/bin/homed-workspace-logout"
 fi
-echo "Done. Log out and back in once so PAM picks up the changes."
+# clean up the legacy su block if a previous version of this tool added it
+if grep -qF "$B" /etc/pam.d/su 2>/dev/null; then
+  echo "Removing obsolete /etc/pam.d/su block from an earlier version:"
+  del /etc/pam.d/su
+fi
+echo "Done. Log out and back in once so PAM picks up the change."
