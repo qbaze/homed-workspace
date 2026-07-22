@@ -43,19 +43,32 @@ if [[ -z ${target:-} || $target == "$me" ]] || ! is_client "$target"; then
 fi
 tuid=$(id -u "$target")
 
+# Keep the user manager alive so `machinectl shell` has a target (idempotent).
 if ! loginctl show-user "$target" -p Linger --value 2>/dev/null | grep -qx yes; then
   loginctl enable-linger "$target" 2>/dev/null || true
 fi
 
-session_up() {
-  loginctl list-sessions --no-legend 2>/dev/null | awk '{print $3}' | grep -qxF "$target"
-}
-if ! session_up; then
-  xfce4-terminal -T "$ANCHOR_MARK: $target" -e \
-    "su -l \"$target\" -c \"echo '[$target] home + keyring unlocked'; exec sleep infinity\""
-  for _ in $(seq 1 50); do session_up && break; sleep 0.3; done
-  session_up || { echo "runas: session for $target did not come up" >&2; exit 1; }
-fi
+# Decide on the REAL home state, not on session presence: linger keeps
+# user@UID.service running even with the home inactive, so a loginctl check gives
+# a false positive and we'd skip activation — then `machinectl shell` mounts the
+# home per-command and prompts for the password every time (the broadcast + hang).
+home_state() { homectl list --no-legend 2>/dev/null | awk -v u="$target" '$1==u{print $4}'; }
+
+case "$(home_state)" in
+  active) ;;                                   # already mounted -> nothing to do
+  absent|"")                                   # record exists but image not here
+    echo "runas: home for '$target' is absent — cannot activate on this machine." >&2
+    echo "       Import/create it first, or run manually: homectl activate $target" >&2
+    exit 1 ;;
+  *)                                           # inactive / dirty -> activate it
+    # Needs a tty for the password prompt (runas is launched from a keybind, not a
+    # terminal). homectl activate mounts the home and exits; the mount persists.
+    xfce4-terminal -T "$ANCHOR_MARK: $target" -x homectl activate "$target"
+    for _ in $(seq 1 100); do [[ $(home_state) == active ]] && break; sleep 0.3; done
+    [[ $(home_state) == active ]] || {
+      echo "runas: home for '$target' did not become active" >&2; exit 1; }
+    ;;
+esac
 
 ensure_audio
 xhost "+si:localuser:$target" >/dev/null
