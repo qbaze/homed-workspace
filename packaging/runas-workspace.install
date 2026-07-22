@@ -1,0 +1,25 @@
+post_install() {
+    systemd-tmpfiles --create runas.tmpfiles >/dev/null 2>&1 || true
+    cat <<'MSG'
+
+==> runas-workspace zainstalowany.
+
+    Wrapper `runas` działa od razu (linger + audio konfigurują się same przy
+    pierwszym użyciu). Warunek: bądź w grupie `wheel`.
+
+    Aby włączyć odblokowanie keyringa jednym hasłem ORAZ automatyczne wylogowanie
+    klientów przy Twoim logout, odpal JAWNIE (paczka nie tyka cudzych plików PAM
+    sama z siebie):
+
+        sudo runas-setup          # cofnięcie: sudo runas-setup --undo
+
+    Potem wyloguj się i zaloguj raz. Szczegóły: /usr/share/doc/runas-workspace/README.md
+MSG
+}
+post_upgrade() {
+    systemd-tmpfiles --create runas.tmpfiles >/dev/null 2>&1 || true
+}
+post_remove() {
+    echo "==> Jeśli włączałeś integrację PAM, cofnij ją: sudo runas-setup --undo"
+    echo "    (uruchom PRZED usunięciem pakietu, albo wyczyść bloki PAM ręcznie)."
+}

@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# runas — uruchom komendę jako klient-user, do którego należy bieżący workspace XFCE.
+# Model: jedno logowanie hasłem na klienta/boot; linger trzyma sesję; kolejne
+# komendy przez `machinectl shell` bez hasła. Linger i audio konfigurują się same.
+
+set -euo pipefail
+
+RUNAS_DIR=/run/runas                       # dedykowany katalog (tmpfiles.d, sticky)
+me=$(id -un); myuid=$(id -u)
+SOCK="${RUNAS_DIR}/pulse-${myuid}"          # socket audio unikalny dla Twojego UID
+ANCHOR_MARK="runas-anchor"
+
+current_ws() {
+  local cur; cur=$(xdotool get_desktop) || return 1
+  wmctrl -d | awk -v c="$cur" '$1==c{s="";for(i=10;i<=NF;i++)s=s(i>10?" ":"")$i;print s}'
+}
+is_client() {
+  local line uid shell
+  line=$(getent passwd "$1") || return 1
+  uid=$(cut -d: -f3 <<<"$line"); shell=$(cut -d: -f7 <<<"$line")
+  [[ $uid -ge 1000 && $uid -lt 65000 && $shell =~ (bash|zsh|fish)$ ]]
+}
+
+# audio: drop-in generowany do Twojego ~/.config; socket to Twój plik, więc sam
+# poprawiasz mu prawa. Ścieżka w /run/runas (root-owned, sticky) zamiast /tmp.
+ensure_audio() {
+  local dropin="$HOME/.config/pipewire/pipewire-pulse.conf.d/20-runas-shared.conf"
+  if [[ ! -e $dropin ]]; then
+    mkdir -p "${dropin%/*}"
+    cat > "$dropin" <<CONF
+# generowane przez runas — wspólny socket audio dla sesji klientów
+pulse.properties = {
+    server.address = [
+        "unix:native"
+        { address = "unix:${SOCK}"  client.access = "unrestricted" }
+    ]
+}
+CONF
+    systemctl --user restart pipewire-pulse 2>/dev/null || true
+    for _ in $(seq 1 20); do [[ -S $SOCK ]] && break; sleep 0.2; done
+  fi
+  if [[ -S $SOCK && $(stat -c '%a' "$SOCK" 2>/dev/null) != 666 ]]; then
+    chmod 0666 "$SOCK" 2>/dev/null || true
+  fi
+}
+
+target=$(current_ws || true)
+if [[ -z ${target:-} || $target == "$me" ]] || ! is_client "$target"; then
+  exec "$@"
+fi
+tuid=$(id -u "$target")
+
+# linger: leniwie, raz (polkit autoryzuje wheel dla set-user-linger)
+if ! loginctl show-user "$target" -p Linger --value 2>/dev/null | grep -qx yes; then
+  loginctl enable-linger "$target" 2>/dev/null || true
+fi
+
+session_up() {
+  loginctl list-sessions --no-legend 2>/dev/null | awk '{print $3}' | grep -qxF "$target"
+}
+if ! session_up; then
+  # jedyne pytanie o hasło (klucz szyfrowania home). su -l przez PAM service
+  # "runas" (jeśli włączony przez runas-setup) odblokowuje też keyring.
+  xfce4-terminal -T "$ANCHOR_MARK: $target" -e \
+    "su -l \"$target\" -c \"echo '[$target] home + keyring odblokowane'; exec sleep infinity\""
+  for _ in $(seq 1 50); do session_up && break; sleep 0.3; done
+  session_up || { echo "runas: sesja dla $target nie wstała" >&2; exit 1; }
+fi
+
+ensure_audio
+xhost "+si:localuser:$target" >/dev/null
+
+exec machinectl shell --quiet \
+  --setenv=DISPLAY="${DISPLAY}" \
+  --setenv=XDG_RUNTIME_DIR="/run/user/${tuid}" \
+  --setenv=DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${tuid}/bus" \
+  --setenv=PULSE_SERVER="unix:${SOCK}" \
+  "${target}@.host" /usr/bin/env "$@"

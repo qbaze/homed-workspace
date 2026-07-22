@@ -1,0 +1,23 @@
+pkgbase = runas-workspace-git
+	pkgdesc = Izolowane środowiska per klient: userzy homed na workspace XFCE, komendy przez machinectl shell
+	pkgver = 0.0.0
+	pkgrel = 1
+	url = https://github.com/USER/runas-workspace
+	arch = any
+	license = MIT
+	makedepends = git
+	depends = bash
+	depends = systemd
+	depends = polkit
+	depends = wmctrl
+	depends = xdotool
+	depends = xorg-xhost
+	depends = xfce4-terminal
+	optdepends = pipewire-pulse: wspólny socket audio dla sesji klientów (auto-setup)
+	optdepends = gnome-keyring: odblokowanie sekretów per klient (włącz przez runas-setup)
+	provides = runas-workspace
+	conflicts = runas-workspace
+	source = runas-workspace::git+https://github.com/USER/runas-workspace.git
+	sha256sums = SKIP
+
+pkgname = runas-workspace-git
