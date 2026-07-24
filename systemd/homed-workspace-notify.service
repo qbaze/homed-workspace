@@ -1,13 +1,18 @@
 [Unit]
 Description=homed-workspace: notify on workspace change
-PartOf=graphical-session.target
+# NOTE: intentionally NOT WantedBy=graphical-session.target — that target is only
+# started by desktops integrated with the systemd user session (GNOME does, XFCE
+# does not), so the unit would stay enabled-but-dead. default.target always runs.
 After=graphical-session.target
 
 [Service]
 Type=simple
 ExecStart=/usr/bin/homed-workspace-notify
-Restart=on-failure
-RestartSec=2
+# The user manager may start before X is up and without DISPLAY/XAUTHORITY in its
+# environment; the script waits for X and exits non-zero if it cannot attach, so
+# systemd keeps retrying until the session exists.
+Restart=always
+RestartSec=5
 
 [Install]
-WantedBy=graphical-session.target
+WantedBy=default.target

@@ -99,9 +99,18 @@ systemctl --user enable --now homed-workspace-notify.service
 ```
 
 Needs `libnotify` (for `notify-send`); on X11, `xorg-xprop` upgrades it from
-polling to true events. If your desktop doesn't export `DISPLAY` into the systemd
-user manager, add once to your session startup:
-`dbus-update-activation-environment --systemd DISPLAY XAUTHORITY`.
+polling to true events.
+
+The unit is `WantedBy=default.target`, **not** `graphical-session.target`: that
+target is only started by desktops integrated with the systemd user session
+(GNOME does, XFCE does not), so hanging the unit off it would leave it
+enabled-but-dead until started by hand. Because the user manager may start before
+X — and without `DISPLAY`/`XAUTHORITY` in its environment — the service discovers
+the X socket itself and exits non-zero if it cannot attach yet; `Restart=always`
+then retries until the session is up.
+
+If you prefer to push the session environment into systemd instead, add this once
+to your session startup: `dbus-update-activation-environment --systemd DISPLAY XAUTHORITY`.
 
 ## Commands
 

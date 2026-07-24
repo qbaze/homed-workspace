@@ -10,8 +10,40 @@ _LIB=/usr/lib/homed-workspace/lib.sh
 # shellcheck source=/dev/null
 source "$_LIB"
 
-# systemd --user services may lack session env; best-effort defaults for X11.
-export DISPLAY="${DISPLAY:-:0}"
+# --- attach to the graphical session -----------------------------------------
+# A systemd --user manager usually starts before X and without DISPLAY/XAUTHORITY
+# in its environment, so discover them instead of assuming. Exit non-zero when we
+# cannot attach: the unit has Restart=always, so systemd retries until X is up.
+find_display() {
+  [[ -n ${DISPLAY:-} ]] && return 0
+  local s
+  for s in /tmp/.X11-unix/X*; do
+    [[ -S $s ]] || continue
+    export DISPLAY=":${s##*/X}"
+    return 0
+  done
+  return 1
+}
+find_xauthority() {
+  [[ -n ${XAUTHORITY:-} && -r ${XAUTHORITY:-} ]] && return 0
+  local c
+  for c in "$XDG_RUNTIME_DIR"/xauth_* "$HOME/.Xauthority"; do
+    [[ -r $c ]] || continue
+    export XAUTHORITY="$c"
+    return 0
+  done
+  return 0   # not fatal: same-user access often works without it
+}
+
+if [[ -z ${WAYLAND_DISPLAY:-} && -z ${SWAYSOCK:-} ]]; then
+  find_display || { echo "no X display found yet; will retry" >&2; exit 1; }
+  find_xauthority
+  # verify we can actually talk to the server before entering the watch loop
+  if command -v xprop >/dev/null 2>&1; then
+    xprop -root -notype _NET_CURRENT_DESKTOP >/dev/null 2>&1 \
+      || { echo "cannot reach X server on $DISPLAY yet; will retry" >&2; exit 1; }
+  fi
+fi
 
 last=""
 watch_ws | while read -r _; do
@@ -20,3 +52,7 @@ watch_ws | while read -r _; do
   last=$name
   notify-send -a homed-workspace -u low "Workspace" "$name" 2>/dev/null || true
 done
+
+# watch_ws ended (X went away, tool died) -> fail so systemd restarts us
+echo "watch_ws exited; restarting" >&2
+exit 1
