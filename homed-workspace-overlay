@@ -52,9 +52,18 @@ class Overlay(Gtk.Window):
         self.add(self.label)
 
         css = Gtk.CssProvider()
+        # Text outline (black halo via layered text-shadow) keeps the label legible
+        # on ANY background — light, dark or busy — without sampling what's beneath.
         css.load_from_data(f"""
             window {{ background-color: rgba(0,0,0,{OPACITY}); border-radius: 10px; }}
-            label  {{ color: #ffffff; font-size: 18px; font-weight: bold; }}
+            label  {{
+                color: #ffffff;
+                font-size: 18px;
+                font-weight: bold;
+                text-shadow: -1px -1px 0 #000, 1px -1px 0 #000,
+                             -1px  1px 0 #000, 1px  1px 0 #000,
+                              0px  2px 3px rgba(0,0,0,0.9);
+            }}
         """.encode())
         Gtk.StyleContext.add_provider_for_screen(
             screen, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
