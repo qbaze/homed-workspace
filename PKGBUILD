@@ -21,7 +21,10 @@ makedepends=('git')
 provides=('homed-workspace')
 conflicts=('homed-workspace')
 install="${_pkgname}.install"
-source=("${_pkgname}::git+https://github.com/qbaze/homed-workspace.git")
+# Branch to build from — override with HW_BRANCH=<branch> makepkg ..., defaults to main.
+# (makepkg has no --branch flag; this is a plain bash var read at parse time.)
+_branch="${HW_BRANCH:-main}"
+source=("${_pkgname}::git+https://github.com/qbaze/homed-workspace.git#branch=${_branch}")
 sha256sums=('SKIP')
 
 pkgver() {
