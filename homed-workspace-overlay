@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
-# homed-workspace-overlay — a persistent, always-on-top, click-through overlay
-# showing the current workspace name in a screen corner. Updates whenever the
-# workspace changes. Opt-in, runs as a `systemctl --user` service.
-#
-# Reuses the shared library's notion of the current workspace by shelling out to
-# `current_ws` (same source of truth as runas / notify). It watches for changes
-# by polling that at a light interval; the event-driven watch_ws lives in bash,
-# and polling here keeps the overlay a single self-contained process.
-import gi, os, signal, subprocess
+# homed-workspace-overlay — persistent, always-on-top, click-through overlay
+# showing the current workspace name in a corner of EVERY connected monitor.
+# Updates on workspace change; rebuilds when monitors are plugged/unplugged.
+# Opt-in, runs as a `systemctl --user` service.
+import gi, os, signal, subprocess, cairo
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
 
 LIB = "/usr/lib/homed-workspace/lib.sh"
-# corner + margins (top-right by default); override via env
-CORNER = os.environ.get("HW_OVERLAY_CORNER", "top-right")
-MARGIN = int(os.environ.get("HW_OVERLAY_MARGIN", "24"))
-OPACITY = float(os.environ.get("HW_OVERLAY_OPACITY", "0.5"))   # 50%
+CORNER  = os.environ.get("HW_OVERLAY_CORNER", "top-right")
+MARGIN  = int(os.environ.get("HW_OVERLAY_MARGIN", "24"))
+OPACITY = float(os.environ.get("HW_OVERLAY_OPACITY", "0.5"))
 POLL_MS = int(os.environ.get("HW_OVERLAY_POLL_MS", "250"))
+
+_CSS = f"""
+    window {{ background-color: rgba(0,0,0,{OPACITY}); border-radius: 10px; }}
+    label  {{
+        color: #ffffff; font-size: 18px; font-weight: bold;
+        text-shadow: -1px -1px 0 #000, 1px -1px 0 #000,
+                     -1px  1px 0 #000, 1px  1px 0 #000,
+                      0px  2px 3px rgba(0,0,0,0.9);
+    }}
+"""
 
 def current_ws():
     try:
@@ -26,20 +31,20 @@ def current_ws():
     except Exception:
         return ""
 
-class Overlay(Gtk.Window):
-    def __init__(self):
+class CornerWindow(Gtk.Window):
+    """One overlay window pinned to the corner of a single monitor."""
+    def __init__(self, geometry):
         super().__init__(type=Gtk.WindowType.POPUP)
-        # visual: no decorations, not in taskbar/pager, always above, all desktops
+        self.geometry = geometry
         self.set_decorated(False)
         self.set_skip_taskbar_hint(True)
         self.set_skip_pager_hint(True)
         self.set_keep_above(True)
         self.set_accept_focus(False)
         self.set_resizable(False)
-        self.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)  # stays above, no focus steal
-        self.stick()                                         # show on every workspace
+        self.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)
+        self.stick()
 
-        # RGBA visual so the background can be truly translucent (needs compositor)
         screen = self.get_screen()
         vis = screen.get_rgba_visual()
         if vis:
@@ -51,59 +56,77 @@ class Overlay(Gtk.Window):
         self.label.set_margin_start(16); self.label.set_margin_end(16)
         self.add(self.label)
 
-        css = Gtk.CssProvider()
-        # Text outline (black halo via layered text-shadow) keeps the label legible
-        # on ANY background — light, dark or busy — without sampling what's beneath.
-        css.load_from_data(f"""
-            window {{ background-color: rgba(0,0,0,{OPACITY}); border-radius: 10px; }}
-            label  {{
-                color: #ffffff;
-                font-size: 18px;
-                font-weight: bold;
-                text-shadow: -1px -1px 0 #000, 1px -1px 0 #000,
-                             -1px  1px 0 #000, 1px  1px 0 #000,
-                              0px  2px 3px rgba(0,0,0,0.9);
-            }}
-        """.encode())
-        Gtk.StyleContext.add_provider_for_screen(
-            screen, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-
-        self.connect("realize", self._make_click_through)
+        self.connect("realize", self._click_through)
         self.connect("size-allocate", lambda *_: self._reposition())
-        self._last = None
-        self._tick()
-        GLib.timeout_add(POLL_MS, self._tick)
 
-    def _make_click_through(self, *_):
-        # empty input region -> clicks pass through to windows underneath
+    def _click_through(self, *_):
         win = self.get_window()
         if win:
-            win.input_shape_combine_region(
-                __import__("cairo").Region(), 0, 0)
+            win.input_shape_combine_region(cairo.Region(), 0, 0)
 
     def _reposition(self):
-        screen = self.get_screen()
-        mon = screen.get_monitor_geometry(screen.get_primary_monitor())
+        g = self.geometry
         w, h = self.get_size()
-        x = mon.x + (mon.width - w - MARGIN if "right" in CORNER else MARGIN)
-        y = mon.y + (mon.height - h - MARGIN if "bottom" in CORNER else MARGIN)
+        x = g.x + (g.width  - w - MARGIN if "right"  in CORNER else MARGIN)
+        y = g.y + (g.height - h - MARGIN if "bottom" in CORNER else MARGIN)
         self.move(x, y)
+
+    def set_text(self, text):
+        self.label.set_text(text)
+        self.show_all()
+        self._reposition()
+
+class OverlayManager:
+    """Owns one CornerWindow per monitor; rebuilds on monitor hotplug."""
+    def __init__(self):
+        self.display = Gdk.Display.get_default()
+        self.screen = Gdk.Screen.get_default()
+        self.windows = []
+        self._last = None
+
+        Gtk.StyleContext.add_provider_for_screen(
+            self.screen, self._css(), Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        # rebuild windows when monitors change (dock/undock, resolution change)
+        self.display.connect("monitor-added",   lambda *_: self._rebuild())
+        self.display.connect("monitor-removed", lambda *_: self._rebuild())
+        self.screen.connect("size-changed",     lambda *_: self._rebuild())
+
+        self._rebuild()
+        GLib.timeout_add(POLL_MS, self._tick)
+
+    def _css(self):
+        p = Gtk.CssProvider(); p.load_from_data(_CSS.encode()); return p
+
+    def _rebuild(self):
+        for w in self.windows:
+            w.destroy()
+        self.windows = []
+        n = self.display.get_n_monitors()
+        for i in range(n):
+            mon = self.display.get_monitor(i)
+            geo = mon.get_geometry()
+            win = CornerWindow(geo)
+            self.windows.append(win)
+        self._last = None          # force repaint of the fresh windows
+        self._tick()
+        return False
 
     def _tick(self):
         name = current_ws()
         if name and name != self._last:
             self._last = name
-            self.label.set_text(name)
-            self.show_all()
-            self._reposition()
+            for w in self.windows:
+                w.set_text(name)
         elif not name:
-            self.hide()
+            for w in self.windows:
+                w.hide()
         return True
 
 def main():
-    signal.signal(signal.SIGINT, lambda *_: Gtk.main_quit())
+    signal.signal(signal.SIGINT,  lambda *_: Gtk.main_quit())
     signal.signal(signal.SIGTERM, lambda *_: Gtk.main_quit())
-    Overlay()
+    OverlayManager()
     Gtk.main()
 
 if __name__ == "__main__":
