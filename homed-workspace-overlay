@@ -58,12 +58,22 @@ class CornerWindow(Gtk.Window):
         self.add(self.label)
 
         self.connect("realize", self._click_through)
-        self.connect("size-allocate", lambda *_: self._reposition())
+        self.connect("map", self._click_through)          # also after every show
+        self.connect("size-allocate", lambda *_: (self._reposition(), self._click_through()))
 
     def _click_through(self, *_):
+        # Make the whole window transparent to input so clicks reach whatever is
+        # underneath. Re-applied after realize, map and size changes because GTK
+        # can otherwise reset the input region to the full window.
         win = self.get_window()
-        if win:
-            win.input_shape_combine_region(cairo.Region(), 0, 0)
+        if win is not None:
+            empty = cairo.Region()
+            win.input_shape_combine_region(empty, 0, 0)
+            # belt-and-suspenders: some GTK builds honour the pass-through flag
+            try:
+                win.set_pass_through(True)
+            except Exception:
+                pass
 
     def _reposition(self):
         g = self.geometry
