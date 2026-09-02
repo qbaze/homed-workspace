@@ -46,11 +46,20 @@ if [[ -z ${WAYLAND_DISPLAY:-} && -z ${SWAYSOCK:-} ]]; then
 fi
 
 last=""
+nid=0
 watch_ws | while read -r _; do
   name=$(current_ws 2>/dev/null || true)
   [[ -n $name && $name != "$last" ]] || continue
   last=$name
-  notify-send -a homed-workspace -u low "Workspace" "$name" 2>/dev/null || true
+  # Replace the previous notification in place instead of stacking:
+  #   --replace-id reuses the same notification slot (needs the previous id),
+  #   --print-id returns the id of the one we just sent for the next round,
+  #   the synchronous hint tells xfce4-notifyd this is one rolling series.
+  nid=$(notify-send -a homed-workspace -u low \
+          --replace-id="$nid" --print-id \
+          --hint=string:x-canonical-private-synchronous:homed-workspace-ws \
+          --hint=string:synchronous:homed-workspace-ws \
+          "Workspace" "$name" 2>/dev/null) || nid=0
 done
 
 # watch_ws ended (X went away, tool died) -> fail so systemd restarts us
