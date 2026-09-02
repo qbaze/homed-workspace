@@ -10,13 +10,14 @@ from gi.repository import Gtk, Gdk, GLib
 LIB = "/usr/lib/homed-workspace/lib.sh"
 CORNER  = os.environ.get("HW_OVERLAY_CORNER", "top-right")
 MARGIN  = int(os.environ.get("HW_OVERLAY_MARGIN", "24"))
-OPACITY = float(os.environ.get("HW_OVERLAY_OPACITY", "0.5"))
+OPACITY = float(os.environ.get("HW_OVERLAY_OPACITY", "0.5"))        # badge background
+TEXT_OPACITY = float(os.environ.get("HW_OVERLAY_TEXT_OPACITY", "1.0"))  # the label text
 POLL_MS = int(os.environ.get("HW_OVERLAY_POLL_MS", "250"))
 
 _CSS = f"""
     window {{ background-color: rgba(0,0,0,{OPACITY}); border-radius: 10px; }}
     label  {{
-        color: #ffffff; font-size: 18px; font-weight: bold;
+        color: rgba(255,255,255,{TEXT_OPACITY}); font-size: 18px; font-weight: bold;
         text-shadow: -1px -1px 0 #000, 1px -1px 0 #000,
                      -1px  1px 0 #000, 1px  1px 0 #000,
                       0px  2px 3px rgba(0,0,0,0.9);
