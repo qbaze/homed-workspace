@@ -112,6 +112,23 @@ then retries until the session is up.
 If you prefer to push the session environment into systemd instead, add this once
 to your session startup: `dbus-update-activation-environment --systemd DISPLAY XAUTHORITY`.
 
+## Workspace overlay (optional)
+
+A persistent, always-on-top, click-through label in a screen corner showing the
+current workspace name (i.e. the client you're acting as). It sits above every
+window — including client windows, since they share your X server — and passes
+clicks through, so it never gets in the way. Opt-in, per user:
+
+```bash
+systemctl --user enable --now homed-workspace-overlay.service
+```
+
+Needs `python-gobject` + `gtk3`, and a running compositor for the 50% translucent
+background (xfwm4's compositor is fine). Tunable via environment:
+`HW_OVERLAY_CORNER` (top-right/top-left/bottom-right/bottom-left), `HW_OVERLAY_OPACITY`
+(0.0–1.0), `HW_OVERLAY_MARGIN` (px). It reads the workspace name from the same
+`current_ws` in the shared library, so it stays in sync with everything else.
+
 ## Commands
 
 | command | purpose |
@@ -120,6 +137,7 @@ to your session startup: `dbus-update-activation-environment --systemd DISPLAY X
 | `homed-workspace-setup [--undo]` | install/remove the logout hook (DM PAM) |
 | `homed-workspace-logout` | tear down client sessions (also runs on your logout) |
 | `homed-workspace-notify` | notify on workspace change (run via the `--user` service) |
+| `homed-workspace-overlay` | persistent workspace-name overlay (run via the `--user` service) |
 
 ## Portability
 

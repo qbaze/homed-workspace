@@ -1,7 +1,7 @@
 # Maintainer: Your Name <you@example.com>
 pkgname=homed-workspace-git
 _pkgname=homed-workspace
-pkgver=0.0.0.r9.g56a30f5
+pkgver=0.0.0.r7.g4692c09
 pkgrel=1
 pkgdesc="Run commands as the systemd-homed user matching your current workspace (one homed account per client)"
 arch=('any')
@@ -11,6 +11,9 @@ depends=('bash' 'systemd' 'polkit' 'wmctrl' 'xorg-xhost' 'xfce4-terminal')
 optdepends=('pipewire-pulse: shared audio socket for client sessions (auto-configured)'
             'libnotify: workspace-change notifications (homed-workspace-notify)'
             'xorg-xprop: event-driven workspace notifications on X11 (else polling)'
+            'python-gobject: persistent workspace overlay (homed-workspace-overlay)'
+            'gtk3: persistent workspace overlay (homed-workspace-overlay)'
+            'python-cairo: click-through region for the overlay'
             'xdotool: more robust active-workspace detection on X11'
             'sway: workspace detection & notifications on Sway'
             'hyprland: workspace detection on Hyprland')
@@ -38,11 +41,14 @@ package() {
     install -Dm755 homed-workspace-logout "$pkgdir/usr/bin/homed-workspace-logout"
     install -Dm755 homed-workspace-setup  "$pkgdir/usr/bin/homed-workspace-setup"
     install -Dm755 homed-workspace-notify "$pkgdir/usr/bin/homed-workspace-notify"
+    install -Dm755 homed-workspace-overlay "$pkgdir/usr/bin/homed-workspace-overlay"
     # shared library
     install -Dm644 lib/lib.sh "$pkgdir/usr/lib/homed-workspace/lib.sh"
     # systemd --user unit (opt-in)
     install -Dm644 systemd/homed-workspace-notify.service \
         "$pkgdir/usr/lib/systemd/user/homed-workspace-notify.service"
+    install -Dm644 systemd/homed-workspace-overlay.service \
+        "$pkgdir/usr/lib/systemd/user/homed-workspace-overlay.service"
     # system integration files
     install -Dm644 packaging/50-homed-workspace.rules \
         "$pkgdir/usr/share/polkit-1/rules.d/50-homed-workspace.rules"

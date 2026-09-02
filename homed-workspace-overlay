@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+# homed-workspace-overlay — a persistent, always-on-top, click-through overlay
+# showing the current workspace name in a screen corner. Updates whenever the
+# workspace changes. Opt-in, runs as a `systemctl --user` service.
+#
+# Reuses the shared library's notion of the current workspace by shelling out to
+# `current_ws` (same source of truth as runas / notify). It watches for changes
+# by polling that at a light interval; the event-driven watch_ws lives in bash,
+# and polling here keeps the overlay a single self-contained process.
+import gi, os, signal, subprocess
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, Gdk, GLib
+
+LIB = "/usr/lib/homed-workspace/lib.sh"
+# corner + margins (top-right by default); override via env
+CORNER = os.environ.get("HW_OVERLAY_CORNER", "top-right")
+MARGIN = int(os.environ.get("HW_OVERLAY_MARGIN", "24"))
+OPACITY = float(os.environ.get("HW_OVERLAY_OPACITY", "0.5"))   # 50%
+POLL_MS = int(os.environ.get("HW_OVERLAY_POLL_MS", "250"))
+
+def current_ws():
+    try:
+        out = subprocess.run(["bash", "-c", f"source {LIB}; current_ws"],
+                             capture_output=True, text=True, timeout=2)
+        return out.stdout.strip()
+    except Exception:
+        return ""
+
+class Overlay(Gtk.Window):
+    def __init__(self):
+        super().__init__(type=Gtk.WindowType.POPUP)
+        # visual: no decorations, not in taskbar/pager, always above, all desktops
+        self.set_decorated(False)
+        self.set_skip_taskbar_hint(True)
+        self.set_skip_pager_hint(True)
+        self.set_keep_above(True)
+        self.set_accept_focus(False)
+        self.set_resizable(False)
+        self.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)  # stays above, no focus steal
+        self.stick()                                         # show on every workspace
+
+        # RGBA visual so the background can be truly translucent (needs compositor)
+        screen = self.get_screen()
+        vis = screen.get_rgba_visual()
+        if vis:
+            self.set_visual(vis)
+        self.set_app_paintable(True)
+
+        self.label = Gtk.Label()
+        self.label.set_margin_top(8); self.label.set_margin_bottom(8)
+        self.label.set_margin_start(16); self.label.set_margin_end(16)
+        self.add(self.label)
+
+        css = Gtk.CssProvider()
+        css.load_from_data(f"""
+            window {{ background-color: rgba(0,0,0,{OPACITY}); border-radius: 10px; }}
+            label  {{ color: #ffffff; font-size: 18px; font-weight: bold; }}
+        """.encode())
+        Gtk.StyleContext.add_provider_for_screen(
+            screen, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        self.connect("realize", self._make_click_through)
+        self.connect("size-allocate", lambda *_: self._reposition())
+        self._last = None
+        self._tick()
+        GLib.timeout_add(POLL_MS, self._tick)
+
+    def _make_click_through(self, *_):
+        # empty input region -> clicks pass through to windows underneath
+        win = self.get_window()
+        if win:
+            win.input_shape_combine_region(
+                __import__("cairo").Region(), 0, 0)
+
+    def _reposition(self):
+        screen = self.get_screen()
+        mon = screen.get_monitor_geometry(screen.get_primary_monitor())
+        w, h = self.get_size()
+        x = mon.x + (mon.width - w - MARGIN if "right" in CORNER else MARGIN)
+        y = mon.y + (mon.height - h - MARGIN if "bottom" in CORNER else MARGIN)
+        self.move(x, y)
+
+    def _tick(self):
+        name = current_ws()
+        if name and name != self._last:
+            self._last = name
+            self.label.set_text(name)
+            self.show_all()
+            self._reposition()
+        elif not name:
+            self.hide()
+        return True
+
+def main():
+    signal.signal(signal.SIGINT, lambda *_: Gtk.main_quit())
+    signal.signal(signal.SIGTERM, lambda *_: Gtk.main_quit())
+    Overlay()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()
