@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 # homed-workspace-overlay — persistent, always-on-top, click-through overlay
 # showing the current workspace name in a corner of EVERY connected monitor.
-# Event-driven: it listens for X11 workspace changes natively via GDK
-# (_NET_CURRENT_DESKTOP PropertyNotify) instead of polling or a helper process,
+# Event-driven: it listens for X11 workspace changes natively via python-xlib
+# (_NET_CURRENT_DESKTOP PropertyNotify on the root window) instead of polling or a helper process,
 # so it uses ~0 CPU at rest and has no subprocess to supervise. The workspace
 # name itself is read through the shared library's current_ws (keeps backend
 # logic in one place). Rebuilds on monitor hotplug. Opt-in `systemctl --user`.
 import gi, os, signal, subprocess, cairo
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
+from Xlib import X, display as Xdisplay
 
 LIB = "/usr/lib/homed-workspace/lib.sh"
 CORNER  = os.environ.get("HW_OVERLAY_CORNER", "top-right")
@@ -106,25 +107,29 @@ class OverlayManager:
     def _css(self):
         p = Gtk.CssProvider(); p.load_from_data(_CSS.encode()); return p
 
-    # --- native GDK listener (no subprocess) ---------------------------------
+    # --- native X11 listener via python-xlib (no subprocess) -----------------
     def _start_watch(self):
-        # Listen directly for X11 workspace changes: _NET_CURRENT_DESKTOP on the
-        # root window emits a PropertyNotify on every switch. No subprocess to
-        # spawn or supervise — systemd already restarts the whole service.
-        root = self.screen.get_root_window()
-        root.set_events(root.get_events() | Gdk.EventMask.PROPERTY_CHANGE_MASK)
-        self._atom = Gdk.Atom.intern("_NET_CURRENT_DESKTOP", False)
-        Gdk.Window.add_filter(root, self._on_root_event)
+        # Watch _NET_CURRENT_DESKTOP on the root window with python-xlib, and wake
+        # the GTK loop via the X connection fd — no polling, no subprocess. The
+        # workspace *name* is still read through the shared library's current_ws.
+        self._xdisp = Xdisplay.Display()
+        self._xroot = self._xdisp.screen().root
+        self._xatom = self._xdisp.intern_atom("_NET_CURRENT_DESKTOP")
+        self._xroot.change_attributes(event_mask=X.PropertyChangeMask)
+        self._xdisp.flush()
+        GLib.io_add_watch(self._xdisp.fileno(), GLib.IO_IN, self._on_x_event)
 
-    def _on_root_event(self, xevent, event):
-        # Filter runs for every root event; refresh only on our property change.
-        try:
-            if event.type == Gdk.EventType.PROPERTY_NOTIFY and event.atom == self._atom:
-                self._refresh()
-        except Exception:
-            # some GDK builds pass raw events without .atom; refresh conservatively
+    def _on_x_event(self, *_):
+        # Drain all pending X events; refresh if any is our property change.
+        changed = False
+        while self._xdisp.pending_events():
+            ev = self._xdisp.next_event()
+            if getattr(ev, "type", None) == X.PropertyNotify and \
+               getattr(ev, "atom", None) == self._xatom:
+                changed = True
+        if changed:
             self._refresh()
-        return Gdk.FilterReturn.CONTINUE
+        return True
 
     # --- rendering -----------------------------------------------------------
     def _refresh(self):
