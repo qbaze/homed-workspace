@@ -126,7 +126,8 @@ systemctl --user enable --now homed-workspace-overlay.service
 Needs `python-gobject` + `gtk3`, and a running compositor for the 50% translucent
 background (xfwm4's compositor is fine). Tunable via environment:
 `HW_OVERLAY_CORNER` (top-right/top-left/bottom-right/bottom-left), `HW_OVERLAY_OPACITY`
-(0.0–1.0), `HW_OVERLAY_MARGIN` (px). It reads the workspace name from the same
+(badge background, 0.0–1.0), `HW_OVERLAY_TEXT_OPACITY` (the text itself, 0.0–1.0),
+`HW_OVERLAY_MARGIN` (px). It reads the workspace name from the same
 `current_ws` in the shared library, so it stays in sync with everything else.
 
 ## Commands

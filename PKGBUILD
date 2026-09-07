@@ -1,7 +1,7 @@
 # Maintainer: Your Name <you@example.com>
 pkgname=homed-workspace-git
 _pkgname=homed-workspace
-pkgver=0.0.0.r16.gd37efd3
+pkgver=0.0.0.r7.g4692c09
 pkgrel=1
 pkgdesc="Run commands as the systemd-homed user matching your current workspace (one homed account per client)"
 arch=('any')

@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 # homed-workspace-overlay — persistent, always-on-top, click-through overlay
 # showing the current workspace name in a corner of EVERY connected monitor.
-# Updates on workspace change; rebuilds when monitors are plugged/unplugged.
-# Opt-in, runs as a `systemctl --user` service.
+# Event-driven: it listens for X11 workspace changes natively via GDK
+# (_NET_CURRENT_DESKTOP PropertyNotify) instead of polling or a helper process,
+# so it uses ~0 CPU at rest and has no subprocess to supervise. The workspace
+# name itself is read through the shared library's current_ws (keeps backend
+# logic in one place). Rebuilds on monitor hotplug. Opt-in `systemctl --user`.
 import gi, os, signal, subprocess, cairo
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
@@ -10,9 +13,8 @@ from gi.repository import Gtk, Gdk, GLib
 LIB = "/usr/lib/homed-workspace/lib.sh"
 CORNER  = os.environ.get("HW_OVERLAY_CORNER", "top-right")
 MARGIN  = int(os.environ.get("HW_OVERLAY_MARGIN", "24"))
-OPACITY = float(os.environ.get("HW_OVERLAY_OPACITY", "0.5"))        # badge background
+OPACITY = float(os.environ.get("HW_OVERLAY_OPACITY", "0.5"))          # badge background
 TEXT_OPACITY = float(os.environ.get("HW_OVERLAY_TEXT_OPACITY", "1.0"))  # the label text
-POLL_MS = int(os.environ.get("HW_OVERLAY_POLL_MS", "250"))
 
 _CSS = f"""
     window {{ background-color: rgba(0,0,0,{OPACITY}); border-radius: 10px; }}
@@ -58,18 +60,13 @@ class CornerWindow(Gtk.Window):
         self.add(self.label)
 
         self.connect("realize", self._click_through)
-        self.connect("map", self._click_through)          # also after every show
+        self.connect("map", self._click_through)
         self.connect("size-allocate", lambda *_: (self._reposition(), self._click_through()))
 
     def _click_through(self, *_):
-        # Make the whole window transparent to input so clicks reach whatever is
-        # underneath. Re-applied after realize, map and size changes because GTK
-        # can otherwise reset the input region to the full window.
         win = self.get_window()
         if win is not None:
-            empty = cairo.Region()
-            win.input_shape_combine_region(empty, 0, 0)
-            # belt-and-suspenders: some GTK builds honour the pass-through flag
+            win.input_shape_combine_region(cairo.Region(), 0, 0)
             try:
                 win.set_pass_through(True)
             except Exception:
@@ -88,51 +85,73 @@ class CornerWindow(Gtk.Window):
         self._reposition()
 
 class OverlayManager:
-    """Owns one CornerWindow per monitor; rebuilds on monitor hotplug."""
+    """One CornerWindow per monitor; event-driven updates; rebuild on hotplug."""
     def __init__(self):
         self.display = Gdk.Display.get_default()
         self.screen = Gdk.Screen.get_default()
         self.windows = []
-        self._last = None
+        self._rebuild_pending = False
+        self._last = current_ws() or None
 
         Gtk.StyleContext.add_provider_for_screen(
             self.screen, self._css(), Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
-        # rebuild windows when monitors change (dock/undock, resolution change)
-        self.display.connect("monitor-added",   lambda *_: self._rebuild())
-        self.display.connect("monitor-removed", lambda *_: self._rebuild())
-        self.screen.connect("size-changed",     lambda *_: self._rebuild())
+        self.display.connect("monitor-added",   self._schedule_rebuild)
+        self.display.connect("monitor-removed", self._schedule_rebuild)
+        self.screen.connect("size-changed",     self._schedule_rebuild)
 
         self._rebuild()
-        GLib.timeout_add(POLL_MS, self._tick)
+        self._start_watch()
 
     def _css(self):
         p = Gtk.CssProvider(); p.load_from_data(_CSS.encode()); return p
 
-    def _rebuild(self):
-        for w in self.windows:
-            w.destroy()
-        self.windows = []
-        n = self.display.get_n_monitors()
-        for i in range(n):
-            mon = self.display.get_monitor(i)
-            geo = mon.get_geometry()
-            win = CornerWindow(geo)
-            self.windows.append(win)
-        self._last = None          # force repaint of the fresh windows
-        self._tick()
-        return False
+    # --- native GDK listener (no subprocess) ---------------------------------
+    def _start_watch(self):
+        # Listen directly for X11 workspace changes: _NET_CURRENT_DESKTOP on the
+        # root window emits a PropertyNotify on every switch. No subprocess to
+        # spawn or supervise — systemd already restarts the whole service.
+        root = self.screen.get_root_window()
+        root.set_events(root.get_events() | Gdk.EventMask.PROPERTY_CHANGE_MASK)
+        self._atom = Gdk.Atom.intern("_NET_CURRENT_DESKTOP", False)
+        Gdk.Window.add_filter(root, self._on_root_event)
 
-    def _tick(self):
+    def _on_root_event(self, xevent, event):
+        # Filter runs for every root event; refresh only on our property change.
+        try:
+            if event.type == Gdk.EventType.PROPERTY_NOTIFY and event.atom == self._atom:
+                self._refresh()
+        except Exception:
+            # some GDK builds pass raw events without .atom; refresh conservatively
+            self._refresh()
+        return Gdk.FilterReturn.CONTINUE
+
+    # --- rendering -----------------------------------------------------------
+    def _refresh(self):
         name = current_ws()
         if name and name != self._last:
             self._last = name
             for w in self.windows:
                 w.set_text(name)
-        elif not name:
+
+    def _schedule_rebuild(self, *_):
+        if self._rebuild_pending:
+            return
+        self._rebuild_pending = True
+        GLib.timeout_add(400, self._rebuild)
+
+    def _rebuild(self):
+        self._rebuild_pending = False
+        for w in self.windows:
+            w.destroy()
+        self.windows = []
+        for i in range(self.display.get_n_monitors()):
+            geo = self.display.get_monitor(i).get_geometry()
+            self.windows.append(CornerWindow(geo))
+        if self._last:
             for w in self.windows:
-                w.hide()
-        return True
+                w.set_text(self._last)
+        return False
 
 def main():
     signal.signal(signal.SIGINT,  lambda *_: Gtk.main_quit())
