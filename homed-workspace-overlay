@@ -147,15 +147,25 @@ class OverlayManager:
 
     def _rebuild(self):
         self._rebuild_pending = False
-        for w in self.windows:
-            w.destroy()
-        self.windows = []
-        for i in range(self.display.get_n_monitors()):
-            geo = self.display.get_monitor(i).get_geometry()
-            self.windows.append(CornerWindow(geo))
-        if self._last:
-            for w in self.windows:
-                w.set_text(self._last)
+        name = current_ws() or self._last or "?"
+        if current_ws():
+            self._last = name
+        n = self.display.get_n_monitors()
+
+        # Reuse existing windows instead of destroying/recreating — a freshly
+        # created window sometimes fails to map after a monitor hotplug, which is
+        # exactly the "overlay vanished" symptom. Grow/shrink the pool, then
+        # repoint each surviving window at its monitor's geometry.
+        while len(self.windows) < n:
+            self.windows.append(CornerWindow(self.display.get_monitor(
+                len(self.windows)).get_geometry()))
+        while len(self.windows) > n:
+            self.windows.pop().destroy()
+
+        for i in range(n):
+            w = self.windows[i]
+            w.geometry = self.display.get_monitor(i).get_geometry()
+            w.set_text(name)            # paints, shows, repositions
         return False
 
 def main():
