@@ -1,7 +1,7 @@
 # Maintainer: Your Name <you@example.com>
 pkgname=homed-workspace-git
 _pkgname=homed-workspace
-pkgver=0.0.0.r21.g7e0e163
+pkgver=0.0.0.r7.g4692c09
 pkgrel=1
 pkgdesc="Run commands as the systemd-homed user matching your current workspace (one homed account per client)"
 arch=('any')
@@ -14,6 +14,7 @@ optdepends=('pipewire-pulse: shared audio socket for client sessions (auto-confi
             'python-gobject: persistent workspace overlay (homed-workspace-overlay)'
             'gtk3: persistent workspace overlay (homed-workspace-overlay)'
             'python-cairo: click-through region for the overlay'
+            'python-xlib: native workspace-change listener for the overlay'
             'xdotool: more robust active-workspace detection on X11'
             'sway: workspace detection & notifications on Sway'
             'hyprland: workspace detection on Hyprland')
@@ -45,6 +46,7 @@ package() {
     install -Dm755 homed-workspace-setup  "$pkgdir/usr/bin/homed-workspace-setup"
     install -Dm755 homed-workspace-notify "$pkgdir/usr/bin/homed-workspace-notify"
     install -Dm755 homed-workspace-overlay "$pkgdir/usr/bin/homed-workspace-overlay"
+    install -Dm755 homed-workspace-tidy   "$pkgdir/usr/bin/homed-workspace-tidy"
     # shared library
     install -Dm644 lib/lib.sh "$pkgdir/usr/lib/homed-workspace/lib.sh"
     # systemd --user unit (opt-in)
