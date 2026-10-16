@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# homed-workspace-tidy — move drifted client windows back to their own workspace.
+# Rule: a window owned by client user X belongs on the workspace named X. Ownership
+# is read from the window's process (_NET_WM_PID -> /proc/PID owner). Not automatic;
+# bind it to a key like "show desktop".
+#
+# Usage:
+#   homed-workspace-tidy            move every client's windows (default)
+#   homed-workspace-tidy <client>   only that client's windows
+#   homed-workspace-tidy -n [...]   dry-run: show what would move, change nothing
+set -uo pipefail
+
+DRYRUN=false; ONLY=""
+for a in "$@"; do
+  case "$a" in
+    -n|--dry-run) DRYRUN=true ;;
+    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    *) ONLY="$a" ;;
+  esac
+done
+
+# workspace name -> desktop number (safe awk: build name from field 10 onward)
+ws_num_for_name() {
+  wmctrl -d | awk -v want="$1" \
+    '{ name=$10; for(i=11;i<=NF;i++) name=name" "$i; if(name==want) print $1 }'
+}
+
+owner_of_pid() {
+  local uid; uid=$(awk '/^Uid:/{print $2; exit}' "/proc/$1/status" 2>/dev/null) || return 1
+  getent passwd "$uid" | cut -d: -f1
+}
+
+moved=0
+# wmctrl -l -p: WINID DESKTOP PID HOST TITLE...
+while read -r winid desktop pid host title; do
+  [[ $pid =~ ^[0-9]+$ && $pid -gt 0 ]] || continue          # need a real PID
+  owner=$(owner_of_pid "$pid") || continue
+  [[ -n $owner ]] || continue
+  [[ -n $ONLY && $owner != "$ONLY" ]] && continue           # optional filter
+  target=$(ws_num_for_name "$owner")
+  [[ -n $target ]] || continue                              # owner has no workspace named after them -> leave it
+  [[ $desktop == "$target" ]] && continue                   # already home
+  [[ $desktop == "-1" ]] && continue                        # sticky/all-desktops (e.g. the overlay) -> leave it
+  if $DRYRUN; then
+    printf 'would move: %-20s [%s] desktop %s -> %s\n' "$title" "$owner" "$desktop" "$target"
+  else
+    wmctrl -i -r "$winid" -t "$target" && moved=$((moved+1))
+  fi
+done < <(wmctrl -l -p)
+
+$DRYRUN || echo "moved $moved window(s)"
