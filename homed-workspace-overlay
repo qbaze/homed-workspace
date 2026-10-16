@@ -97,9 +97,9 @@ class OverlayManager:
         Gtk.StyleContext.add_provider_for_screen(
             self.screen, self._css(), Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
-        self.display.connect("monitor-added",   self._schedule_rebuild)
-        self.display.connect("monitor-removed", self._schedule_rebuild)
-        self.screen.connect("size-changed",     self._schedule_rebuild)
+        self.display.connect("monitor-added",   lambda *_: self._schedule_rebuild("monitor-added"))
+        self.display.connect("monitor-removed", lambda *_: self._schedule_rebuild("monitor-removed"))
+        self.screen.connect("size-changed",     lambda *_: self._schedule_rebuild("size-changed"))
 
         self._rebuild()
         self._start_watch()
@@ -139,7 +139,9 @@ class OverlayManager:
             for w in self.windows:
                 w.set_text(name)
 
-    def _schedule_rebuild(self, *_):
+    def _schedule_rebuild(self, reason="?"):
+        print(f"[overlay] monitor event: {reason}; n_monitors now "
+              f"{self.display.get_n_monitors()}", flush=True)
         if self._rebuild_pending:
             return
         self._rebuild_pending = True
@@ -151,6 +153,8 @@ class OverlayManager:
         if current_ws():
             self._last = name
         n = self.display.get_n_monitors()
+        print(f"[overlay] rebuild: n_monitors={n}, windows before={len(self.windows)}, "
+              f"name='{name}'", flush=True)
 
         # Reuse existing windows instead of destroying/recreating — a freshly
         # created window sometimes fails to map after a monitor hotplug, which is
@@ -164,8 +168,33 @@ class OverlayManager:
 
         for i in range(n):
             w = self.windows[i]
-            w.geometry = self.display.get_monitor(i).get_geometry()
+            g = self.display.get_monitor(i).get_geometry()
+            w.geometry = g
             w.set_text(name)            # paints, shows, repositions
+            print(f"[overlay]   window {i} -> monitor geom "
+                  f"{g.width}x{g.height}+{g.x}+{g.y}, visible={w.get_visible()}", flush=True)
+        print(f"[overlay] rebuild done: windows after={len(self.windows)}", flush=True)
+        # GDK often reports stale monitor geometry right after a hotplug (the randr
+        # change hasn't propagated), which positions windows off-screen -> "vanished".
+        # Re-read geometry a bit later, when it has settled, and reposition.
+        GLib.timeout_add(1200, self._settle)
+        GLib.timeout_add(3000, self._settle)
+        return False
+
+    def _settle(self):
+        n = self.display.get_n_monitors()
+        if n != len(self.windows):      # count changed again -> a rebuild will handle it
+            return False
+        for i in range(n):
+            g = self.display.get_monitor(i).get_geometry()
+            w = self.windows[i]
+            if (g.x, g.y, g.width, g.height) != (w.geometry.x, w.geometry.y,
+                                                 w.geometry.width, w.geometry.height):
+                print(f"[overlay] settle: window {i} geom was "
+                      f"+{w.geometry.x}+{w.geometry.y}, now +{g.x}+{g.y} -> reposition",
+                      flush=True)
+                w.geometry = g
+            w._reposition()
         return False
 
 def main():
