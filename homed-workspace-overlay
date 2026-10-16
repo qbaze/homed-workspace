@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+# homed-workspace-overlay — persistent, always-on-top, click-through overlay
+# showing the current workspace name in a corner of EVERY connected monitor.
+# Event-driven: it listens for X11 workspace changes natively via python-xlib
+# (_NET_CURRENT_DESKTOP PropertyNotify on the root window) instead of polling or a helper process,
+# so it uses ~0 CPU at rest and has no subprocess to supervise. The workspace
+# name itself is read through the shared library's current_ws (keeps backend
+# logic in one place). Rebuilds on monitor hotplug. Opt-in `systemctl --user`.
+import gi, os, signal, subprocess, cairo
+gi.require_version("Gtk", "3.0")
+from gi.repository import Gtk, Gdk, GLib
+from Xlib import X, display as Xdisplay
+
+LIB = "/usr/lib/homed-workspace/lib.sh"
+CORNER  = os.environ.get("HW_OVERLAY_CORNER", "top-right")
+MARGIN  = int(os.environ.get("HW_OVERLAY_MARGIN", "24"))
+OPACITY = float(os.environ.get("HW_OVERLAY_OPACITY", "0.5"))          # badge background
+TEXT_OPACITY = float(os.environ.get("HW_OVERLAY_TEXT_OPACITY", "1.0"))  # the label text
+
+_CSS = f"""
+    window {{ background-color: rgba(0,0,0,{OPACITY}); border-radius: 10px; }}
+    label  {{
+        color: rgba(255,255,255,{TEXT_OPACITY}); font-size: 18px; font-weight: bold;
+        text-shadow: -1px -1px 0 #000, 1px -1px 0 #000,
+                     -1px  1px 0 #000, 1px  1px 0 #000,
+                      0px  2px 3px rgba(0,0,0,0.9);
+    }}
+"""
+
+def current_ws():
+    try:
+        out = subprocess.run(["bash", "-c", f"source {LIB}; current_ws"],
+                             capture_output=True, text=True, timeout=2)
+        return out.stdout.strip()
+    except Exception:
+        return ""
+
+class CornerWindow(Gtk.Window):
+    """One overlay window pinned to the corner of a single monitor."""
+    def __init__(self, geometry):
+        super().__init__(type=Gtk.WindowType.POPUP)
+        self.geometry = geometry
+        self.set_decorated(False)
+        self.set_skip_taskbar_hint(True)
+        self.set_skip_pager_hint(True)
+        self.set_keep_above(True)
+        self.set_accept_focus(False)
+        self.set_resizable(False)
+        self.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)
+        self.stick()
+
+        screen = self.get_screen()
+        vis = screen.get_rgba_visual()
+        if vis:
+            self.set_visual(vis)
+        self.set_app_paintable(True)
+
+        self.label = Gtk.Label()
+        self.label.set_margin_top(8); self.label.set_margin_bottom(8)
+        self.label.set_margin_start(16); self.label.set_margin_end(16)
+        self.add(self.label)
+
+        self.connect("realize", self._click_through)
+        self.connect("map", self._click_through)
+        self.connect("size-allocate", lambda *_: (self._reposition(), self._click_through()))
+
+    def _click_through(self, *_):
+        win = self.get_window()
+        if win is not None:
+            win.input_shape_combine_region(cairo.Region(), 0, 0)
+            try:
+                win.set_pass_through(True)
+            except Exception:
+                pass
+
+    def _reposition(self):
+        g = self.geometry
+        w, h = self.get_size()
+        x = g.x + (g.width  - w - MARGIN if "right"  in CORNER else MARGIN)
+        y = g.y + (g.height - h - MARGIN if "bottom" in CORNER else MARGIN)
+        self.move(x, y)
+
+    def set_text(self, text):
+        self.label.set_text(text)
+        self.show_all()
+        self._reposition()
+
+class OverlayManager:
+    """One CornerWindow per monitor; event-driven updates; rebuild on hotplug."""
+    def __init__(self):
+        self.display = Gdk.Display.get_default()
+        self.screen = Gdk.Screen.get_default()
+        self.windows = []
+        self._rebuild_pending = False
+        self._last = current_ws() or None
+
+        Gtk.StyleContext.add_provider_for_screen(
+            self.screen, self._css(), Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        self.display.connect("monitor-added",   self._schedule_rebuild)
+        self.display.connect("monitor-removed", self._schedule_rebuild)
+        self.screen.connect("size-changed",     self._schedule_rebuild)
+
+        self._rebuild()
+        self._start_watch()
+
+    def _css(self):
+        p = Gtk.CssProvider(); p.load_from_data(_CSS.encode()); return p
+
+    # --- native X11 listener via python-xlib (no subprocess) -----------------
+    def _start_watch(self):
+        # Watch _NET_CURRENT_DESKTOP on the root window with python-xlib, and wake
+        # the GTK loop via the X connection fd — no polling, no subprocess. The
+        # workspace *name* is still read through the shared library's current_ws.
+        self._xdisp = Xdisplay.Display()
+        self._xroot = self._xdisp.screen().root
+        self._xatom = self._xdisp.intern_atom("_NET_CURRENT_DESKTOP")
+        self._xroot.change_attributes(event_mask=X.PropertyChangeMask)
+        self._xdisp.flush()
+        GLib.io_add_watch(self._xdisp.fileno(), GLib.IO_IN, self._on_x_event)
+
+    def _on_x_event(self, *_):
+        # Drain all pending X events; refresh if any is our property change.
+        changed = False
+        while self._xdisp.pending_events():
+            ev = self._xdisp.next_event()
+            if getattr(ev, "type", None) == X.PropertyNotify and \
+               getattr(ev, "atom", None) == self._xatom:
+                changed = True
+        if changed:
+            self._refresh()
+        return True
+
+    # --- rendering -----------------------------------------------------------
+    def _refresh(self):
+        name = current_ws()
+        if name and name != self._last:
+            self._last = name
+            for w in self.windows:
+                w.set_text(name)
+
+    def _schedule_rebuild(self, *_):
+        if self._rebuild_pending:
+            return
+        self._rebuild_pending = True
+        GLib.timeout_add(400, self._rebuild)
+
+    def _rebuild(self):
+        self._rebuild_pending = False
+        name = current_ws() or self._last or "?"
+        if current_ws():
+            self._last = name
+        n = self.display.get_n_monitors()
+
+        # Reuse existing windows instead of destroying/recreating — a freshly
+        # created window sometimes fails to map after a monitor hotplug, which is
+        # exactly the "overlay vanished" symptom. Grow/shrink the pool, then
+        # repoint each surviving window at its monitor's geometry.
+        while len(self.windows) < n:
+            self.windows.append(CornerWindow(self.display.get_monitor(
+                len(self.windows)).get_geometry()))
+        while len(self.windows) > n:
+            self.windows.pop().destroy()
+
+        for i in range(n):
+            w = self.windows[i]
+            w.geometry = self.display.get_monitor(i).get_geometry()
+            w.set_text(name)            # paints, shows, repositions
+        return False
+
+def main():
+    signal.signal(signal.SIGINT,  lambda *_: Gtk.main_quit())
+    signal.signal(signal.SIGTERM, lambda *_: Gtk.main_quit())
+    OverlayManager()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()

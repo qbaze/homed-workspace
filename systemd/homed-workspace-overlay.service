@@ -1,0 +1,12 @@
+[Unit]
+Description=homed-workspace: persistent workspace-name overlay
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/homed-workspace-overlay
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

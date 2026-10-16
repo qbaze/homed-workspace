@@ -46,20 +46,41 @@ if [[ -z ${WAYLAND_DISPLAY:-} && -z ${SWAYSOCK:-} ]]; then
 fi
 
 last=""
-nid=0
+nid=""
+# Robust de-stacking that does not rely on notify-send flags or server hints
+# (xfce4-notifyd ignores the synchronous hint, and older libnotify lacks
+# --print-id/--replace-id): explicitly close the previous notification over D-Bus
+# before sending the next, and persist the id so it survives a process restart.
+ID_FILE="${XDG_RUNTIME_DIR:-/tmp}/homed-workspace-notify.id"
+[[ -r $ID_FILE ]] && nid=$(cat "$ID_FILE" 2>/dev/null)
+
+close_prev() {
+  [[ -n ${nid//[^0-9]/} ]] || return 0
+  gdbus call --session \
+    --dest org.freedesktop.Notifications \
+    --object-path /org/freedesktop/Notifications \
+    --method org.freedesktop.Notifications.CloseNotification \
+    "$nid" >/dev/null 2>&1 || true
+}
+send() {   # $1 = workspace name -> returns new id via stdout
+  # gdbus prints e.g. "(uint32 42,)" — strip the type keyword first, otherwise the
+  # "32" in "uint32" gets parsed as the id.
+  gdbus call --session \
+    --dest org.freedesktop.Notifications \
+    --object-path /org/freedesktop/Notifications \
+    --method org.freedesktop.Notifications.Notify \
+    "homed-workspace" "${nid:-0}" "" "Workspace" "$1" \
+    "[]" "{'urgency': <byte 0>}" "int32 2000" 2>/dev/null \
+    | sed 's/uint32//g' | grep -o '[0-9]\+' | head -1
+}
+
 watch_ws | while read -r _; do
   name=$(current_ws 2>/dev/null || true)
   [[ -n $name && $name != "$last" ]] || continue
   last=$name
-  # Replace the previous notification in place instead of stacking:
-  #   --replace-id reuses the same notification slot (needs the previous id),
-  #   --print-id returns the id of the one we just sent for the next round,
-  #   the synchronous hint tells xfce4-notifyd this is one rolling series.
-  nid=$(notify-send -a homed-workspace -u low \
-          --replace-id="$nid" --print-id \
-          --hint=string:x-canonical-private-synchronous:homed-workspace-ws \
-          --hint=string:synchronous:homed-workspace-ws \
-          "Workspace" "$name" 2>/dev/null) || nid=0
+  close_prev
+  nid=$(send "$name") || nid=""
+  printf '%s' "$nid" > "$ID_FILE" 2>/dev/null || true
 done
 
 # watch_ws ended (X went away, tool died) -> fail so systemd restarts us

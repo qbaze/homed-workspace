@@ -17,6 +17,15 @@ MSG
 }
 post_upgrade() {
     systemd-tmpfiles --create homed-workspace.tmpfiles >/dev/null 2>&1 || true
+    cat <<'MSG'
+
+==> homed-workspace upgraded. The user manager was reloaded automatically, but
+    already-running services keep the old version until you restart them:
+
+        systemctl --user restart homed-workspace-notify homed-workspace-overlay
+
+    (Only restart the ones you actually have enabled.)
+MSG
 }
 post_remove() {
     echo "==> If you installed the logout hook, undo it: sudo homed-workspace-setup --undo"
