@@ -139,6 +139,9 @@ background (xfwm4's compositor is fine). Tunable via environment:
 | `homed-workspace-logout` | tear down client sessions (also runs on your logout) |
 | `homed-workspace-notify` | notify on workspace change (run via the `--user` service) |
 | `homed-workspace-overlay` | persistent workspace-name overlay (run via the `--user` service) |
+| `homed-workspace-tidy [client]` | move drifted client windows back to their workspace (`-n` to preview) |
+| `homed-workspace-menu` | rofi menu: activate / switch / log out clients on demand (dynamic workspaces) |
+| `homed-workspace-gui` | GTK window: same as the menu, as a window (activate / switch / log out) |
 
 ## Portability
 

@@ -1,7 +1,7 @@
 # Maintainer: Your Name <you@example.com>
 pkgname=homed-workspace-git
 _pkgname=homed-workspace
-pkgver=0.0.0.r25.ge7d24ac
+pkgver=0.0.0.r7.g4692c09
 pkgrel=1
 pkgdesc="Run commands as the systemd-homed user matching your current workspace (one homed account per client)"
 arch=('any')
@@ -15,6 +15,7 @@ optdepends=('pipewire-pulse: shared audio socket for client sessions (auto-confi
             'gtk3: persistent workspace overlay (homed-workspace-overlay)'
             'python-cairo: click-through region for the overlay'
             'python-xlib: native workspace-change listener for the overlay'
+            'rofi: client activation/logout menu (homed-workspace-menu; dmenu also works)'
             'xdotool: more robust active-workspace detection on X11'
             'sway: workspace detection & notifications on Sway'
             'hyprland: workspace detection on Hyprland')
@@ -47,6 +48,8 @@ package() {
     install -Dm755 homed-workspace-notify "$pkgdir/usr/bin/homed-workspace-notify"
     install -Dm755 homed-workspace-overlay "$pkgdir/usr/bin/homed-workspace-overlay"
     install -Dm755 homed-workspace-tidy   "$pkgdir/usr/bin/homed-workspace-tidy"
+    install -Dm755 homed-workspace-menu   "$pkgdir/usr/bin/homed-workspace-menu"
+    install -Dm755 homed-workspace-gui    "$pkgdir/usr/bin/homed-workspace-gui"
     # shared library
     install -Dm644 lib/lib.sh "$pkgdir/usr/lib/homed-workspace/lib.sh"
     # systemd --user unit (opt-in)
@@ -59,6 +62,9 @@ package() {
         "$pkgdir/usr/share/polkit-1/rules.d/50-homed-workspace.rules"
     install -Dm644 packaging/homed-workspace.tmpfiles \
         "$pkgdir/usr/lib/tmpfiles.d/homed-workspace.conf"
+    # app launcher for the GUI
+    install -Dm644 desktop/homed-workspace-gui.desktop \
+        "$pkgdir/usr/share/applications/homed-workspace-gui.desktop"
     # docs
     install -Dm644 README.md "$pkgdir/usr/share/doc/${_pkgname}/README.md"
     install -Dm644 LICENSE   "$pkgdir/usr/share/licenses/${_pkgname}/LICENSE"
