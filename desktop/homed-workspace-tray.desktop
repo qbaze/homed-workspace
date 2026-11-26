@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Workspace Clients (tray)
+Comment=Panel tray switcher for homed client workspaces
+Exec=/usr/bin/homed-workspace-tray
+Icon=user-group
+Terminal=false
+Categories=System;Utility;
+X-XFCE-Autostart-enabled=true

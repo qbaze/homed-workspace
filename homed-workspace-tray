@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+# homed-workspace-tray — a panel tray icon with a dropdown switcher for homed
+# clients: click it to activate / switch / log out clients. Workspaces are
+# dynamic (activating creates the workspace, logging out removes it). Meant to
+# autostart in your session and sit in the XFCE panel's notification area.
+import gi, os, subprocess, threading, time
+gi.require_version("Gtk", "3.0")
+# AppIndicator: prefer the maintained Ayatana fork, fall back to the old one.
+_ind = None
+for _name, _ver in (("AyatanaAppIndicator3", "0.1"), ("AppIndicator3", "0.1")):
+    try:
+        gi.require_version(_name, _ver)
+        _ind = __import__("gi.repository", fromlist=[_name])
+        _ind = getattr(_ind, _name)
+        break
+    except Exception:
+        continue
+from gi.repository import Gtk, GLib
+
+if _ind is None:
+    import sys
+    sys.stderr.write("homed-workspace-tray: need libayatana-appindicator "
+                     "(or libappindicator-gtk3)\n")
+    sys.exit(1)
+
+REFRESH_MS = 4000  # rebuild the menu from current state every few seconds
+
+def sh(args, timeout=5):
+    try:
+        return subprocess.run(args, capture_output=True, text=True,
+                              timeout=timeout).stdout
+    except Exception:
+        return ""
+
+# --- clients & workspaces (same ops as the GUI/menu) -------------------------
+def list_clients():
+    rows = []
+    for line in sh(["homectl", "list", "--no-legend"]).splitlines():
+        f = line.split()
+        if len(f) >= 4:
+            rows.append((f[0], f[3]))
+    rows.sort()
+    return rows
+
+def ws_names():
+    out = sh(["xfconf-query", "-c", "xfwm4", "-p", "/general/workspace_names"])
+    return [l for l in out.splitlines() if l and not l.startswith("Value is an array")]
+
+def ws_num_for_name(name):
+    for line in sh(["wmctrl", "-d"]).splitlines():
+        f = line.split(None, 9)
+        if len(f) >= 10 and f[9].strip() == name:
+            return f[0]
+    return None
+
+def _set_ws_names(names):
+    args = ["xfconf-query", "-c", "xfwm4", "-p", "/general/workspace_names"]
+    if len(names) == 1:
+        args.append("--force-array")
+    for n in names:
+        args += ["-t", "string", "-s", n]
+    sh(args)
+
+def add_ws(name):
+    if ws_num_for_name(name):
+        return
+    names = ws_names() + [name]
+    sh(["xfconf-query", "-c", "xfwm4", "-p", "/general/workspace_count", "-s", str(len(names))])
+    _set_ws_names(names)
+
+def remove_ws(name):
+    names = ws_names(); out = [n for n in names if n != name]
+    if len(out) == len(names) or len(out) < 1:
+        return
+    sh(["xfconf-query", "-c", "xfwm4", "-p", "/general/workspace_count", "-s", str(len(out))])
+    _set_ws_names(out)
+
+def switch_ws(name):
+    num = ws_num_for_name(name)
+    if num is not None:
+        sh(["wmctrl", "-s", num])
+
+def windows_of(name):
+    c = 0
+    for line in sh(["wmctrl", "-l", "-p"]).splitlines():
+        f = line.split(None, 4)
+        if len(f) < 3 or not f[2].isdigit():
+            continue
+        try:
+            with open(f"/proc/{f[2]}/status") as fh:
+                uid = next((l.split()[1] for l in fh if l.startswith("Uid:")), None)
+        except Exception:
+            continue
+        if uid and sh(["getent", "passwd", uid]).split(":")[0:1] == [name]:
+            c += 1
+    return c
+
+def client_state(name):
+    for n, st in list_clients():
+        if n == name:
+            return st
+    return ""
+
+# --- actions (slow bits off the main loop) -----------------------------------
+def do_activate(name, after):
+    subprocess.Popen(["xfce4-terminal", "-T", f"activate {name}",
+                      "-x", "homectl", "activate", name])
+    def worker():
+        for _ in range(100):
+            if client_state(name) == "active":
+                break
+            time.sleep(0.3)
+        if client_state(name) == "active":
+            add_ws(name); time.sleep(0.3); switch_ws(name)
+        else:
+            GLib.idle_add(notify, f"activation of {name} failed")
+        GLib.idle_add(after)
+    threading.Thread(target=worker, daemon=True).start()
+
+def do_logout(name, after):
+    def worker():
+        sh(["loginctl", "terminate-user", name]); time.sleep(1)
+        sh(["loginctl", "kill-user", "--signal=SIGKILL", name]); time.sleep(1)
+        sh(["homectl", "deactivate", name], timeout=15); time.sleep(0.5)
+        if client_state(name) == "active":
+            sh(["homectl", "deactivate", name], timeout=15)
+        remove_ws(name)
+        GLib.idle_add(after)
+    threading.Thread(target=worker, daemon=True).start()
+
+def notify(msg):
+    sh(["notify-send", "homed-workspace", msg])
+
+def confirm(text, secondary):
+    d = Gtk.MessageDialog(modal=True, message_type=Gtk.MessageType.WARNING,
+                          buttons=Gtk.ButtonsType.OK_CANCEL, text=text)
+    d.format_secondary_text(secondary)
+    d.set_keep_above(True)
+    r = d.run(); d.destroy()
+    return r == Gtk.ResponseType.OK
+
+# --- tray --------------------------------------------------------------------
+class Tray:
+    def __init__(self):
+        self.ind = _ind.Indicator.new(
+            "homed-workspace", "user-group",
+            _ind.IndicatorCategory.APPLICATION_STATUS)
+        self.ind.set_status(_ind.IndicatorStatus.ACTIVE)
+        self.ind.set_title("Workspace clients")
+        self.rebuild()
+        GLib.timeout_add(REFRESH_MS, self._tick)
+
+    def _tick(self):
+        self.rebuild()
+        return True
+
+    def rebuild(self):
+        m = Gtk.Menu()
+        clients = list_clients()
+        if not clients:
+            mi = Gtk.MenuItem(label="(no homed clients)"); mi.set_sensitive(False)
+            m.append(mi)
+        for name, state in clients:
+            if state == "active":
+                mi = Gtk.MenuItem(label=f"●  {name}  —  switch")
+                mi.connect("activate", lambda _w, n=name: switch_ws(n))
+            elif state == "absent":
+                mi = Gtk.MenuItem(label=f"○  {name}  (home absent)")
+                mi.set_sensitive(False)
+            else:
+                mi = Gtk.MenuItem(label=f"○  {name}  —  activate")
+                mi.connect("activate", lambda _w, n=name: do_activate(n, self.rebuild))
+            m.append(mi)
+
+        active = [n for n, s in clients if s == "active"]
+        if active:
+            m.append(Gtk.SeparatorMenuItem())
+            out = Gtk.MenuItem(label="Log out a client")
+            sub = Gtk.Menu()
+            for n in active:
+                it = Gtk.MenuItem(label=n)
+                it.connect("activate", lambda _w, nn=n: self._logout(nn))
+                sub.append(it)
+            out.set_submenu(sub)
+            m.append(out)
+
+        m.append(Gtk.SeparatorMenuItem())
+        r = Gtk.MenuItem(label="Refresh"); r.connect("activate", lambda *_: self.rebuild())
+        m.append(r)
+        q = Gtk.MenuItem(label="Quit"); q.connect("activate", lambda *_: Gtk.main_quit())
+        m.append(q)
+
+        m.show_all()
+        self.ind.set_menu(m)
+
+    def _logout(self, name):
+        n = windows_of(name)
+        if n > 0 and not confirm(f"{name} has {n} open window(s).",
+                                 "Logging out will close them. Continue?"):
+            return
+        do_logout(name, self.rebuild)
+
+def main():
+    Tray()
+    Gtk.main()
+
+if __name__ == "__main__":
+    main()
