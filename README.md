@@ -135,6 +135,8 @@ background (xfwm4's compositor is fine). Tunable via environment:
 | command | purpose |
 |---|---|
 | `runas <cmd>` | run `<cmd>` as the client owning the current workspace |
+| `homed-workspace-new-client [-g grp] [-s shell] <name>` | provision a client account: homed home + working tree + guardrails |
+| `homed-workspace-remove-client [-y] <name>` | tear down a client account: deactivate + wipe encrypted home (`homectl remove`) |
 | `homed-workspace-setup [--undo]` | install/remove the logout hook (DM PAM) |
 | `homed-workspace-logout` | tear down client sessions (also runs on your logout) |
 | `homed-workspace-notify` | notify on workspace change (run via the `--user` service) |
