@@ -15,6 +15,9 @@ drop=(); for u in "${users[@]}"; do [[ $u == "$KEEP" ]] || drop+=("$u"); done
 # Revoke the X access runas granted to clients (least-privilege cleanup)
 for u in "${drop[@]}"; do xhost "-si:localuser:$u" 2>/dev/null || true; done
 
+# disable linger first, else systemd resurrects user@UID.service and keeps the
+# home busy, making deactivate fail.
+for u in "${drop[@]}"; do loginctl disable-linger "$u" 2>/dev/null || true; done
 for u in "${drop[@]}"; do loginctl terminate-user "$u" 2>/dev/null || true; done
 sleep 1
 for u in "${drop[@]}"; do
