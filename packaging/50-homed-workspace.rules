@@ -4,6 +4,8 @@
 polkit.addRule(function(action, subject) {
     if (subject.isInGroup("wheel") &&
         (action.id == "org.freedesktop.machine1.shell" ||
+         // `machinectl shell user@.host` (the local host) uses host-shell, not shell
+         action.id == "org.freedesktop.machine1.host-shell" ||
          action.id == "org.freedesktop.machine1.login" ||
          action.id == "org.freedesktop.home1.activate-home" ||
          action.id == "org.freedesktop.home1.deactivate-home" ||
