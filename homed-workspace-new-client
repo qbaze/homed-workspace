@@ -25,16 +25,30 @@ seed_body() {
   local name="$1"
   mkdir -p "$HOME"/repos "$HOME"/notes "$HOME"/data "$HOME"/data-raw "$HOME"/.claude
 
-  # global gitignore: keep notes/ and data out of every repo under this account
+  # global gitignore: keep client working files AND secrets out of every repo
   if [[ ! -e "$HOME/.gitignore_global" ]]; then
-    printf '%s\n' '# homed-workspace: never let client working files leak into git' \
-      'notes/' 'data/' 'data-raw/' 'CLAUDE.md' '*.private.md' > "$HOME/.gitignore_global"
+    cat > "$HOME/.gitignore_global" <<'GI'
+# homed-workspace: never let client working files or secrets leak into git
+notes/
+data/
+data-raw/
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+*.private.md
+.env*
+*.pem
+*.key
+*-key.json
+credentials*.json
+GI
     echo "   + ~/.gitignore_global"
   else
     echo "   = ~/.gitignore_global (kept)"
   fi
-  git config --global core.excludesFile >/dev/null 2>&1 || \
-    git config --global core.excludesFile "$HOME/.gitignore_global"
+  # Always point git at it — the file alone does nothing until git references it,
+  # and a stale excludesFile pointing elsewhere would silently disable it.
+  git config --global core.excludesFile "$HOME/.gitignore_global"
 
   # Claude Code: block the raw (sensitive) data from being read by the assistant
   if [[ ! -e "$HOME/.claude/settings.json" ]]; then
