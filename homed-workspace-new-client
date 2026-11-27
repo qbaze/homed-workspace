@@ -60,12 +60,16 @@ else
   homectl "${create_args[@]}"
 fi
 
-echo ">> seeding working tree + guardrails (activating the home)"
-# `homectl with` activates the home, runs the body AS the client, then deactivates.
-# $1 inside = the client name; the single-quoted heredoc keeps the outer shell from
-# expanding anything. All writes are guarded so re-seeding never clobbers existing
-# files — safe to run against an account you've already set up.
-homectl with "$name" -- bash -s "$name" <<'SEED'
+echo ">> seeding working tree + guardrails"
+# Run the seed body AS the client. $1 inside = the client name; the single-quoted
+# heredoc keeps the outer shell from expanding anything. All writes are guarded so
+# re-seeding never clobbers existing files — safe against an account already set up.
+# If the home is already active (mounted), just `runuser` into it — no password.
+# Only when it's inactive do we fall back to `homectl with`, which mounts it (and
+# asks for the home password, via the password agent under sudo).
+home_state() { homectl list --no-legend 2>/dev/null | awk -v u="$name" '$1==u{print $4}'; }
+run_seed() {  # $@ = runner prefix, e.g. `runuser -u NAME --` or `homectl with NAME --`
+  "$@" bash -s "$name" <<'SEED'
 set -euo pipefail
 name="$1"
 
@@ -132,6 +136,14 @@ else
   echo "   = ~/.claude/CLAUDE.md (kept)"
 fi
 SEED
+}
+
+if [[ $(home_state) == active ]]; then
+  run_seed runuser -u "$name" --            # home mounted -> no password needed
+else
+  echo "   (home inactive — activating via homectl; may prompt for the home password)"
+  run_seed homectl with "$name" --
+fi
 
 if $SEED_ONLY; then
   echo ">> done. '$name' seeded (home deactivated)."
