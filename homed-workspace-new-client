@@ -8,9 +8,12 @@
 # tool versions) is therefore client-scoped automatically.
 #
 # Usage:
-#   sudo homed-workspace-new-client [-g grp1,grp2] [-s shell] <name>
+#   sudo homed-workspace-new-client [-g grp1,grp2] [-s shell] <name>   create + seed
+#   sudo homed-workspace-new-client -S <name>                         seed an existing account
 #     -g  comma-separated supplementary groups (default: docker if it exists)
 #     -s  login shell (default: /bin/zsh)
+#     -S  seed only: skip creation, just lay out the tree + guardrails (idempotent;
+#         never overwrites files the account already has)
 #
 # The client is deliberately NOT added to wheel: your main user holds wheel and
 # injects into the client session via `runas`; the client needs no sudo itself.
@@ -24,36 +27,44 @@ set -euo pipefail
 SHELL_BIN=/bin/zsh
 GROUPS_CSV=""
 groups_set=false
-while getopts "g:s:h" o; do
+SEED_ONLY=false
+while getopts "g:s:Sh" o; do
   case "$o" in
     g) GROUPS_CSV="$OPTARG"; groups_set=true ;;
     s) SHELL_BIN="$OPTARG" ;;
-    h) sed -n '2,16p' "$0"; exit 0 ;;
+    S) SEED_ONLY=true ;;
+    h) sed -n '2,20p' "$0"; exit 0 ;;
     *) exit 1 ;;
   esac
 done
 shift $((OPTIND - 1))
 
 name="${1:-}"
-[[ -n $name ]] || { echo "usage: sudo homed-workspace-new-client [-g grp] [-s shell] <name>" >&2; exit 1; }
+[[ -n $name ]] || { echo "usage: sudo homed-workspace-new-client [-g grp] [-s shell] <name>  (or -S <name>)" >&2; exit 1; }
 [[ $name =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo "invalid name: $name" >&2; exit 1; }
-if getent passwd "$name" >/dev/null; then
-  echo "user '$name' already exists — nothing to do." >&2; exit 1
+
+is_homed() { homectl list --no-legend 2>/dev/null | awk '{print $1}' | grep -qx "$name"; }
+
+if $SEED_ONLY; then
+  is_homed || { echo "'$name' is not an existing homed user — nothing to seed." >&2; exit 1; }
+else
+  if getent passwd "$name" >/dev/null; then
+    echo "user '$name' already exists. To (re)lay out its tree, use: -S $name" >&2; exit 1
+  fi
+  # default groups: docker if present (client work is usually containerised)
+  if ! $groups_set && getent group docker >/dev/null; then GROUPS_CSV="docker"; fi
+
+  create_args=(create "$name" --shell="$SHELL_BIN")
+  [[ -n $GROUPS_CSV ]] && create_args+=(--member-of="$GROUPS_CSV")
+  echo ">> creating homed account '$name' (shell=$SHELL_BIN${GROUPS_CSV:+, groups=$GROUPS_CSV})"
+  homectl "${create_args[@]}"
 fi
-
-# default groups: docker if present (client work is usually containerised)
-if ! $groups_set && getent group docker >/dev/null; then GROUPS_CSV="docker"; fi
-
-create_args=(create "$name" --shell="$SHELL_BIN")
-[[ -n $GROUPS_CSV ]] && create_args+=(--member-of="$GROUPS_CSV")
-
-echo ">> creating homed account '$name' (shell=$SHELL_BIN${GROUPS_CSV:+, groups=$GROUPS_CSV})"
-homectl "${create_args[@]}"
 
 echo ">> seeding working tree + guardrails (activating the home)"
 # `homectl with` activates the home, runs the body AS the client, then deactivates.
-# $1 inside = the client name (passed to bash -s); the single-quoted heredoc keeps
-# the outer shell from expanding anything.
+# $1 inside = the client name; the single-quoted heredoc keeps the outer shell from
+# expanding anything. All writes are guarded so re-seeding never clobbers existing
+# files — safe to run against an account you've already set up.
 homectl with "$name" -- bash -s "$name" <<'SEED'
 set -euo pipefail
 name="$1"
@@ -61,7 +72,8 @@ name="$1"
 mkdir -p ~/repos ~/notes ~/data ~/data-raw ~/.claude
 
 # global gitignore: keep notes/ and data out of every repo under this account
-cat > ~/.gitignore_global <<EOF
+if [[ ! -e ~/.gitignore_global ]]; then
+  cat > ~/.gitignore_global <<EOF
 # homed-workspace: never let client working files leak into git
 notes/
 data/
@@ -69,10 +81,17 @@ data-raw/
 CLAUDE.md
 *.private.md
 EOF
-git config --global core.excludesFile ~/.gitignore_global
+  echo "   + ~/.gitignore_global"
+else
+  echo "   = ~/.gitignore_global (kept)"
+fi
+# point git at it only if nothing is set yet
+git config --global core.excludesFile >/dev/null 2>&1 || \
+  git config --global core.excludesFile ~/.gitignore_global
 
 # Claude Code: block the raw (sensitive) data from being read by the assistant
-cat > ~/.claude/settings.json <<EOF
+if [[ ! -e ~/.claude/settings.json ]]; then
+  cat > ~/.claude/settings.json <<EOF
 {
   "permissions": {
     "deny": [
@@ -83,9 +102,14 @@ cat > ~/.claude/settings.json <<EOF
   }
 }
 EOF
+  echo "   + ~/.claude/settings.json"
+else
+  echo "   = ~/.claude/settings.json (kept — check its deny-list covers data-raw/)"
+fi
 
 # starter account-level CLAUDE.md (client-scoped context)
-cat > ~/.claude/CLAUDE.md <<EOF
+if [[ ! -e ~/.claude/CLAUDE.md ]]; then
+  cat > ~/.claude/CLAUDE.md <<EOF
 # Client: $name
 
 Isolated per-client account (systemd-homed). All work for this client lives
@@ -103,11 +127,16 @@ under this home; account-level config is therefore client-scoped.
 - Pin tool versions per repo via .tool-versions (asdf); gcloud stays in
   ~/.tool-versions, not in any repo.
 EOF
-
-echo "   seeded: repos/ notes/ data/ data-raw/ .claude/ .gitignore_global"
+  echo "   + ~/.claude/CLAUDE.md"
+else
+  echo "   = ~/.claude/CLAUDE.md (kept)"
+fi
 SEED
 
-cat <<EOF
+if $SEED_ONLY; then
+  echo ">> done. '$name' seeded (home deactivated)."
+else
+  cat <<EOF
 
 >> done. account '$name' is ready (home currently deactivated).
 
@@ -116,3 +145,4 @@ Next, on the client's workspace:
   - asdf per account, e.g.:  asdf plugin add gcloud && asdf install gcloud latest
   - copy in your own general modules (keep the originals on your main account)
 EOF
+fi
