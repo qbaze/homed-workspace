@@ -3,7 +3,7 @@
 # clients on demand. Workspaces are dynamic: activating a client creates its
 # workspace, logging out removes it. Same model as homed-workspace-menu (the rofi
 # version), just a window instead. Bind it to a shortcut or launch from a menu.
-import gi, os, subprocess, threading, time
+import gi, os, getpass, subprocess, threading, time
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib
 
@@ -81,6 +81,23 @@ def remove_ws(name):
         return
     _apply_ws(out)
 
+def sync_ws():
+    # Recompute the workspace list from truth: the main user plus the currently
+    # active homed clients. Anything else (orphans like a stray "Workspace N",
+    # or a just-logged-out client) is dropped. Existing order is preserved; new
+    # active clients are appended. Self-heals leftovers.
+    main = getpass.getuser()
+    active = [n for n, st in list_clients() if st == "active"]
+    cur = current_ws_list()
+    keep = [w for w in cur if w == main or w in active]
+    if main and main not in keep:
+        keep.insert(0, main)
+    for c in active:
+        if c not in keep:
+            keep.append(c)
+    if keep and keep != cur:
+        _apply_ws(keep)
+
 def switch_ws(name):
     num = ws_num_for_name(name)
     if num is not None:
@@ -115,7 +132,7 @@ def activate(name, on_done):
             time.sleep(0.3)
         ok = client_state(name) == "active"
         if ok:
-            add_ws(name); time.sleep(0.3); switch_ws(name)
+            sync_ws(); time.sleep(0.3); switch_ws(name)
         GLib.idle_add(on_done, ok)
     threading.Thread(target=worker, daemon=True).start()
 
@@ -126,7 +143,7 @@ def logout(name, on_done):
         r = subprocess.run(["pkexec", "/usr/bin/homed-workspace-deactivate", name])
         ok = r.returncode == 0
         if ok:
-            remove_ws(name)        # drop the workspace only on a real deactivation
+            sync_ws()              # recompute from truth (drops this client + orphans)
         else:
             sh(["notify-send", "homed-workspace", f"could not log out {name}"])
         GLib.idle_add(on_done, ok)

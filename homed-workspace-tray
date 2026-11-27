@@ -3,7 +3,7 @@
 # clients: click it to activate / switch / log out clients. Workspaces are
 # dynamic (activating creates the workspace, logging out removes it). Meant to
 # autostart in your session and sit in the XFCE panel's notification area.
-import gi, os, subprocess, threading, time
+import gi, os, getpass, subprocess, threading, time
 gi.require_version("Gtk", "3.0")
 # AppIndicator: prefer the maintained Ayatana fork, fall back to the old one.
 _ind = None
@@ -85,6 +85,24 @@ def remove_ws(name):
         return
     _apply_ws(out)
 
+def sync_ws():
+    # Recompute the workspace list from truth: the main user plus the currently
+    # active homed clients. Anything else (orphans like a stray "Workspace N",
+    # or a just-logged-out client) is dropped. Existing order is preserved; new
+    # active clients are appended. This self-heals leftovers instead of relying
+    # on name-matched add/remove.
+    main = getpass.getuser()
+    active = [n for n, st in list_clients() if st == "active"]
+    cur = current_ws_list()
+    keep = [w for w in cur if w == main or w in active]
+    if main and main not in keep:
+        keep.insert(0, main)
+    for c in active:
+        if c not in keep:
+            keep.append(c)
+    if keep and keep != cur:
+        _apply_ws(keep)
+
 def switch_ws(name):
     num = ws_num_for_name(name)
     if num is not None:
@@ -121,7 +139,7 @@ def do_activate(name, after):
                 break
             time.sleep(0.3)
         if client_state(name) == "active":
-            add_ws(name); time.sleep(0.3); switch_ws(name)
+            sync_ws(); time.sleep(0.3); switch_ws(name)
         else:
             GLib.idle_add(notify, f"activation of {name} failed")
         GLib.idle_add(after)
@@ -133,7 +151,7 @@ def do_logout(name, after):
         # rule lets wheel run this helper via pkexec without a password.
         r = subprocess.run(["pkexec", "/usr/bin/homed-workspace-deactivate", name])
         if r.returncode == 0:
-            remove_ws(name)        # drop the workspace only on a real deactivation
+            sync_ws()              # recompute from truth (drops this client + orphans)
         else:
             GLib.idle_add(notify, f"could not log out {name}")
         GLib.idle_add(after)
