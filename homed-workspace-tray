@@ -120,10 +120,17 @@ def do_logout(name, after):
     def worker():
         sh(["loginctl", "terminate-user", name]); time.sleep(1)
         sh(["loginctl", "kill-user", "--signal=SIGKILL", name]); time.sleep(1)
-        sh(["homectl", "deactivate", name], timeout=15); time.sleep(0.5)
-        if client_state(name) == "active":
+        # deactivate can report the home busy right after the session dies; retry.
+        for _ in range(6):
+            if client_state(name) != "active":
+                break
             sh(["homectl", "deactivate", name], timeout=15)
-        remove_ws(name)
+            time.sleep(1)
+        if client_state(name) == "active":
+            # still active -> do NOT remove the workspace, report instead
+            GLib.idle_add(notify, f"could not log out {name} (still active)")
+        else:
+            remove_ws(name)
         GLib.idle_add(after)
     threading.Thread(target=worker, daemon=True).start()
 
