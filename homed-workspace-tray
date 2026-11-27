@@ -147,7 +147,9 @@ def tidy_windows():
     moved = 0
     for winid, desk, owner in _iter_windows():
         target = ws.get(owner)
-        if target is None or target == desk:
+        # desk "-1" = pinned to all workspaces (panel, desktop, docks); moving
+        # such a window would unstick it, so leave it where it is.
+        if target is None or desk == "-1" or target == desk:
             continue
         sh(["wmctrl", "-i", "-r", winid, "-t", target])
         moved += 1
