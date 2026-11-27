@@ -56,15 +56,17 @@ def ws_num_for_name(name):
     return None
 
 def _apply_ws(names):
-    # set count and names together so they never desync (count == len(names))
-    sh(["xfconf-query", "-c", "xfwm4", "-p", "/general/workspace_count",
-        "-s", str(len(names))])
+    # Set NAMES before COUNT. If count rises before the names array holds the new
+    # entry, xfwm auto-generates a default "Workspace N" label for the new slot.
+    # Writing names first (count then catches up) keeps every slot correctly named.
     args = ["xfconf-query", "-c", "xfwm4", "-p", "/general/workspace_names"]
     if len(names) == 1:
         args.append("--force-array")
     for n in names:
         args += ["-t", "string", "-s", n]
     sh(args)
+    sh(["xfconf-query", "-c", "xfwm4", "-p", "/general/workspace_count",
+        "-s", str(len(names))])
 
 def add_ws(name):
     cur = current_ws_list()
