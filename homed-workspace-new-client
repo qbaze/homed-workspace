@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# homed-workspace-new-client — provision a new per-client systemd-homed account:
+# homed-workspace-new-client — provision a per-client systemd-homed account:
 # create the encrypted home, lay out the standard working tree, and drop in the
 # guardrails (global gitignore + Claude Code deny-list for raw data).
 #
@@ -9,93 +9,36 @@
 #
 # Usage:
 #   sudo homed-workspace-new-client [-g grp1,grp2] [-s shell] <name>   create + seed
-#   sudo homed-workspace-new-client -S <name>                         seed an existing account
+#   sudo homed-workspace-new-client -S <name>                         seed an existing account (root)
+#        homed-workspace-new-client -S                                seed yourself, run on the client's own console (no root)
 #     -g  comma-separated supplementary groups (default: docker if it exists)
 #     -s  login shell (default: /bin/zsh)
-#     -S  seed only: skip creation, just lay out the tree + guardrails (idempotent;
-#         never overwrites files the account already has)
+#     -S  seed only: lay out the tree + guardrails, no account creation. Idempotent;
+#         never overwrites files that already exist.
 #
 # The client is deliberately NOT added to wheel: your main user holds wheel and
 # injects into the client session via `runas`; the client needs no sudo itself.
-#
-# homectl prompts once for the new home's encryption password during creation,
-# and again to activate it for seeding. That is expected.
 set -euo pipefail
 
-[[ $EUID -eq 0 ]] || { echo "run as root: sudo homed-workspace-new-client <name>" >&2; exit 1; }
+# ---- the seed, applied to $HOME of whoever runs it --------------------------
+seed_body() {
+  local name="$1"
+  mkdir -p "$HOME"/repos "$HOME"/notes "$HOME"/data "$HOME"/data-raw "$HOME"/.claude
 
-SHELL_BIN=/bin/zsh
-GROUPS_CSV=""
-groups_set=false
-SEED_ONLY=false
-while getopts "g:s:Sh" o; do
-  case "$o" in
-    g) GROUPS_CSV="$OPTARG"; groups_set=true ;;
-    s) SHELL_BIN="$OPTARG" ;;
-    S) SEED_ONLY=true ;;
-    h) sed -n '2,20p' "$0"; exit 0 ;;
-    *) exit 1 ;;
-  esac
-done
-shift $((OPTIND - 1))
-
-name="${1:-}"
-[[ -n $name ]] || { echo "usage: sudo homed-workspace-new-client [-g grp] [-s shell] <name>  (or -S <name>)" >&2; exit 1; }
-[[ $name =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo "invalid name: $name" >&2; exit 1; }
-
-is_homed() { homectl list --no-legend 2>/dev/null | awk '{print $1}' | grep -qx "$name"; }
-
-if $SEED_ONLY; then
-  is_homed || { echo "'$name' is not an existing homed user — nothing to seed." >&2; exit 1; }
-else
-  if getent passwd "$name" >/dev/null; then
-    echo "user '$name' already exists. To (re)lay out its tree, use: -S $name" >&2; exit 1
+  # global gitignore: keep notes/ and data out of every repo under this account
+  if [[ ! -e "$HOME/.gitignore_global" ]]; then
+    printf '%s\n' '# homed-workspace: never let client working files leak into git' \
+      'notes/' 'data/' 'data-raw/' 'CLAUDE.md' '*.private.md' > "$HOME/.gitignore_global"
+    echo "   + ~/.gitignore_global"
+  else
+    echo "   = ~/.gitignore_global (kept)"
   fi
-  # default groups: docker if present (client work is usually containerised)
-  if ! $groups_set && getent group docker >/dev/null; then GROUPS_CSV="docker"; fi
+  git config --global core.excludesFile >/dev/null 2>&1 || \
+    git config --global core.excludesFile "$HOME/.gitignore_global"
 
-  create_args=(create "$name" --shell="$SHELL_BIN")
-  [[ -n $GROUPS_CSV ]] && create_args+=(--member-of="$GROUPS_CSV")
-  echo ">> creating homed account '$name' (shell=$SHELL_BIN${GROUPS_CSV:+, groups=$GROUPS_CSV})"
-  homectl "${create_args[@]}"
-fi
-
-echo ">> seeding working tree + guardrails"
-# Run the seed body AS the client. $1 inside = the client name; the single-quoted
-# heredoc keeps the outer shell from expanding anything. All writes are guarded so
-# re-seeding never clobbers existing files — safe against an account already set up.
-# If the home is already active (mounted), just `runuser` into it — no password.
-# Only when it's inactive do we fall back to `homectl with`, which mounts it (and
-# asks for the home password, via the password agent under sudo).
-home_state() { homectl list --no-legend 2>/dev/null | awk -v u="$name" '$1==u{print $4}'; }
-run_seed() {  # $@ = runner prefix, e.g. `runuser -u NAME --` or `homectl with NAME --`
-  "$@" bash -s "$name" <<'SEED'
-set -euo pipefail
-name="$1"
-
-mkdir -p ~/repos ~/notes ~/data ~/data-raw ~/.claude
-
-# global gitignore: keep notes/ and data out of every repo under this account
-if [[ ! -e ~/.gitignore_global ]]; then
-  cat > ~/.gitignore_global <<EOF
-# homed-workspace: never let client working files leak into git
-notes/
-data/
-data-raw/
-CLAUDE.md
-*.private.md
-EOF
-  echo "   + ~/.gitignore_global"
-else
-  echo "   = ~/.gitignore_global (kept)"
-fi
-# point git at it only if nothing is set yet
-git config --global core.excludesFile >/dev/null 2>&1 || \
-  git config --global core.excludesFile ~/.gitignore_global
-
-# Claude Code: block the raw (sensitive) data from being read by the assistant
-if [[ ! -e ~/.claude/settings.json ]]; then
-  cat > ~/.claude/settings.json <<EOF
+  # Claude Code: block the raw (sensitive) data from being read by the assistant
+  if [[ ! -e "$HOME/.claude/settings.json" ]]; then
+    cat > "$HOME/.claude/settings.json" <<'JSON'
 {
   "permissions": {
     "deny": [
@@ -105,15 +48,15 @@ if [[ ! -e ~/.claude/settings.json ]]; then
     ]
   }
 }
-EOF
-  echo "   + ~/.claude/settings.json"
-else
-  echo "   = ~/.claude/settings.json (kept — check its deny-list covers data-raw/)"
-fi
+JSON
+    echo "   + ~/.claude/settings.json"
+  else
+    echo "   = ~/.claude/settings.json (kept — check its deny-list covers data-raw/)"
+  fi
 
-# starter account-level CLAUDE.md (client-scoped context)
-if [[ ! -e ~/.claude/CLAUDE.md ]]; then
-  cat > ~/.claude/CLAUDE.md <<EOF
+  # starter account-level CLAUDE.md (client-scoped context)
+  if [[ ! -e "$HOME/.claude/CLAUDE.md" ]]; then
+    cat > "$HOME/.claude/CLAUDE.md" <<EOF
 # Client: $name
 
 Isolated per-client account (systemd-homed). All work for this client lives
@@ -131,22 +74,79 @@ under this home; account-level config is therefore client-scoped.
 - Pin tool versions per repo via .tool-versions (asdf); gcloud stays in
   ~/.tool-versions, not in any repo.
 EOF
-  echo "   + ~/.claude/CLAUDE.md"
-else
-  echo "   = ~/.claude/CLAUDE.md (kept)"
-fi
-SEED
+    echo "   + ~/.claude/CLAUDE.md"
+  else
+    echo "   = ~/.claude/CLAUDE.md (kept)"
+  fi
 }
 
+SHELL_BIN=/bin/zsh
+GROUPS_CSV=""
+groups_set=false
+SEED_ONLY=false
+while getopts "g:s:Sh" o; do
+  case "$o" in
+    g) GROUPS_CSV="$OPTARG"; groups_set=true ;;
+    s) SHELL_BIN="$OPTARG" ;;
+    S) SEED_ONLY=true ;;
+    h) sed -n '2,22p' "$0"; exit 0 ;;
+    *) exit 1 ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+# ---- self-seed: run as the client on its own console, no root ---------------
+if $SEED_ONLY && [[ $EUID -ne 0 ]]; then
+  name=$(id -un)
+  echo ">> seeding ~ for '$name'"
+  seed_body "$name"
+  echo ">> done."
+  exit 0
+fi
+
+# ---- everything else needs root ---------------------------------------------
+[[ $EUID -eq 0 ]] || {
+  echo "run as root: sudo homed-workspace-new-client <name>" >&2
+  echo "   (or, on the client's own console, seed yourself with: homed-workspace-new-client -S)" >&2
+  exit 1; }
+
+name="${1:-}"
+[[ -n $name ]] || { echo "usage: sudo homed-workspace-new-client [-g grp] [-s shell] <name>  (or -S <name>)" >&2; exit 1; }
+[[ $name =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo "invalid name: $name" >&2; exit 1; }
+
+is_homed()   { homectl list --no-legend 2>/dev/null | awk '{print $1}' | grep -qx "$name"; }
+home_state() { homectl list --no-legend 2>/dev/null | awk -v u="$name" '$1==u{print $4}'; }
+
+if $SEED_ONLY; then
+  is_homed || { echo "'$name' is not an existing homed user — nothing to seed." >&2; exit 1; }
+else
+  if getent passwd "$name" >/dev/null; then
+    echo "user '$name' already exists. To (re)lay out its tree, use: -S $name" >&2; exit 1
+  fi
+  # default groups: docker if present (client work is usually containerised)
+  if ! $groups_set && getent group docker >/dev/null; then GROUPS_CSV="docker"; fi
+  create_args=(create "$name" --shell="$SHELL_BIN")
+  [[ -n $GROUPS_CSV ]] && create_args+=(--member-of="$GROUPS_CSV")
+  echo ">> creating homed account '$name' (shell=$SHELL_BIN${GROUPS_CSV:+, groups=$GROUPS_CSV})"
+  homectl "${create_args[@]}"
+fi
+
+echo ">> seeding working tree + guardrails"
+# Ship seed_body into a shell running AS the client. If the home is already active
+# (mounted), `runuser` into it — no password. Only when inactive fall back to
+# `homectl with`, which mounts it (and will ask for the home password).
+run_seed() {  # $@ = runner prefix, e.g. `runuser -u NAME --`
+  "$@" bash -c "set -e; $(declare -f seed_body); seed_body $(printf %q "$name")"
+}
 if [[ $(home_state) == active ]]; then
-  run_seed runuser -u "$name" --            # home mounted -> no password needed
+  run_seed runuser -u "$name" --
 else
   echo "   (home inactive — activating via homectl; may prompt for the home password)"
   run_seed homectl with "$name" --
 fi
 
 if $SEED_ONLY; then
-  echo ">> done. '$name' seeded (home deactivated)."
+  echo ">> done. '$name' seeded."
 else
   cat <<EOF
 
