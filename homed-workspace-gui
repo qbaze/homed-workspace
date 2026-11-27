@@ -36,22 +36,29 @@ def client_state(name):
             return st
     return ""
 
-# --- XFCE workspaces (xfconf) ------------------------------------------------
-def ws_names():
-    out = sh(["xfconf-query", "-c", "xfwm4", "-p", "/general/workspace_names"])
-    lines = out.splitlines()
-    # output: first lines are a header ("Value is an array ...", blank), then names
-    return [l for l in lines if l and not l.startswith("Value is an array")]
+# --- XFCE workspaces (xfconf), sourced from the WM's real desktop list --------
+def current_ws_list():
+    # Authoritative list = what the WM actually has (wmctrl -d), not the xfconf
+    # workspace_names property, which can hold stale/extra entries and desync
+    # (producing phantom "Workspace N" names when count > names).
+    res = []
+    for line in sh(["wmctrl", "-d"]).splitlines():
+        f = line.split(None, 9)
+        if len(f) >= 10:
+            res.append(f[9].strip())
+    return res
 
 def ws_num_for_name(name):
-    out = sh(["wmctrl", "-d"])
-    for line in out.splitlines():
+    for line in sh(["wmctrl", "-d"]).splitlines():
         f = line.split(None, 9)
         if len(f) >= 10 and f[9].strip() == name:
             return f[0]
     return None
 
-def _set_ws_names(names):
+def _apply_ws(names):
+    # set count and names together so they never desync (count == len(names))
+    sh(["xfconf-query", "-c", "xfwm4", "-p", "/general/workspace_count",
+        "-s", str(len(names))])
     args = ["xfconf-query", "-c", "xfwm4", "-p", "/general/workspace_names"]
     if len(names) == 1:
         args.append("--force-array")
@@ -60,21 +67,17 @@ def _set_ws_names(names):
     sh(args)
 
 def add_ws(name):
-    if ws_num_for_name(name):
+    cur = current_ws_list()
+    if name in cur:
         return
-    names = ws_names() + [name]
-    sh(["xfconf-query", "-c", "xfwm4", "-p", "/general/workspace_count",
-        "-s", str(len(names))])
-    _set_ws_names(names)
+    _apply_ws(cur + [name])
 
 def remove_ws(name):
-    names = ws_names()
-    out = [n for n in names if n != name]
-    if len(out) == len(names) or len(out) < 1:
+    cur = current_ws_list()
+    out = [n for n in cur if n != name]
+    if len(out) == len(cur) or len(out) < 1:
         return
-    sh(["xfconf-query", "-c", "xfwm4", "-p", "/general/workspace_count",
-        "-s", str(len(out))])
-    _set_ws_names(out)
+    _apply_ws(out)
 
 def switch_ws(name):
     num = ws_num_for_name(name)
