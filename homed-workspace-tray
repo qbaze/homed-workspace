@@ -23,7 +23,6 @@ if _ind is None:
                      "(or libappindicator-gtk3)\n")
     sys.exit(1)
 
-REFRESH_MS = 4000  # rebuild the menu from current state every few seconds
 
 def sh(args, timeout=5):
     try:
@@ -148,11 +147,6 @@ class Tray:
         self.ind.set_status(_ind.IndicatorStatus.ACTIVE)
         self.ind.set_title("Workspace clients")
         self.rebuild()
-        GLib.timeout_add(REFRESH_MS, self._tick)
-
-    def _tick(self):
-        self.rebuild()
-        return True
 
     def rebuild(self):
         m = Gtk.Menu()
