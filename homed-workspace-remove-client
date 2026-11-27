@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# homed-workspace-remove-client — tear down a per-client systemd-homed account:
+# deactivate the home if mounted, then remove the user record AND its encrypted
+# image. This is the homed equivalent of `userdel -r` (which does NOT apply to
+# homed users — their home is an encrypted image, not a plain directory).
+#
+# Usage:
+#   sudo homed-workspace-remove-client [-y] <name>
+#     -y  skip the confirmation prompt
+#
+# This is destructive and irreversible: the encrypted home is wiped. Revoke the
+# client's cloud / VCS access separately (this script cannot do that for you).
+set -euo pipefail
+
+[[ $EUID -eq 0 ]] || { echo "run as root: sudo homed-workspace-remove-client <name>" >&2; exit 1; }
+
+YES=false
+while getopts "yh" o; do
+  case "$o" in
+    y) YES=true ;;
+    h) sed -n '2,13p' "$0"; exit 0 ;;
+    *) exit 1 ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+name="${1:-}"
+[[ -n $name ]] || { echo "usage: sudo homed-workspace-remove-client [-y] <name>" >&2; exit 1; }
+
+# refuse to remove a non-homed account or obvious non-clients
+homectl list --no-legend 2>/dev/null | awk '{print $1}' | grep -qx "$name" || {
+  echo "'$name' is not a homed user — refusing." >&2; exit 1; }
+[[ $name == root ]] && { echo "refusing to remove root." >&2; exit 1; }
+
+if ! $YES; then
+  echo "This will PERMANENTLY wipe the encrypted home and account for '$name'."
+  read -rp "Type the client name to confirm: " ans
+  [[ $ans == "$name" ]] || { echo "aborted."; exit 1; }
+fi
+
+# deactivate first (handles linger/terminate/kill); ignore if already inactive
+state=$(homectl list --no-legend 2>/dev/null | awk -v u="$name" '$1==u{print $4}')
+if [[ $state == active ]]; then
+  echo ">> deactivating '$name'"
+  if [[ -x /usr/bin/homed-workspace-deactivate ]]; then
+    /usr/bin/homed-workspace-deactivate "$name" || true
+  else
+    loginctl disable-linger "$name" 2>/dev/null || true
+    loginctl terminate-user "$name" 2>/dev/null || true
+    sleep 1; homectl deactivate "$name" 2>/dev/null || true
+  fi
+fi
+
+echo ">> removing account + encrypted home for '$name'"
+homectl remove "$name"
+
+cat <<EOF
+
+>> done. '$name' and its encrypted home are gone.
+
+Reminder — do these by hand (outside this machine):
+  - revoke the client's cloud access (e.g. GCP IAM) and any VCS/CI tokens
+  - confirm NDA return/destruction obligations are satisfied
+EOF

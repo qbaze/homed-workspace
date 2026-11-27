@@ -42,6 +42,8 @@ package() {
     install -Dm755 homed-workspace-logout "$pkgdir/usr/bin/homed-workspace-logout"
     install -Dm755 homed-workspace-deactivate "$pkgdir/usr/bin/homed-workspace-deactivate"
     install -Dm755 homed-workspace-setup  "$pkgdir/usr/bin/homed-workspace-setup"
+    install -Dm755 homed-workspace-new-client    "$pkgdir/usr/bin/homed-workspace-new-client"
+    install -Dm755 homed-workspace-remove-client "$pkgdir/usr/bin/homed-workspace-remove-client"
     install -Dm755 homed-workspace-notify "$pkgdir/usr/bin/homed-workspace-notify"
     install -Dm755 homed-workspace-overlay "$pkgdir/usr/bin/homed-workspace-overlay"
     install -Dm755 homed-workspace-tray   "$pkgdir/usr/bin/homed-workspace-tray"
