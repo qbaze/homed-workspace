@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Workspace Clients
-Comment=Activate / switch / log out homed client workspaces
-Exec=/usr/bin/homed-workspace-gui
-Icon=system-users
-Terminal=false
-Categories=System;Utility;

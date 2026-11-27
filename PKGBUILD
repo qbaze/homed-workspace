@@ -9,7 +9,7 @@ url="https://github.com/qbaze/homed-workspace"
 license=('MIT')
 depends=('bash' 'systemd' 'polkit' 'wmctrl' 'xorg-xhost' 'xfce4-terminal'
          'python-gobject' 'gtk3' 'python-cairo' 'python-xlib'
-         'libnotify' 'rofi' 'libayatana-appindicator')
+         'libnotify' 'libayatana-appindicator')
 optdepends=('pipewire-pulse: shared audio socket for client sessions (auto-configured)'
             'xorg-xprop: event-driven workspace notifications on X11 (else polling)'
             'xdotool: more robust active-workspace detection on X11'
@@ -46,8 +46,6 @@ package() {
     install -Dm755 homed-workspace-overlay "$pkgdir/usr/bin/homed-workspace-overlay"
     install -Dm755 homed-workspace-tray   "$pkgdir/usr/bin/homed-workspace-tray"
     install -Dm755 homed-workspace-tidy   "$pkgdir/usr/bin/homed-workspace-tidy"
-    install -Dm755 homed-workspace-menu   "$pkgdir/usr/bin/homed-workspace-menu"
-    install -Dm755 homed-workspace-gui    "$pkgdir/usr/bin/homed-workspace-gui"
     # shared library
     install -Dm644 lib/lib.sh "$pkgdir/usr/lib/homed-workspace/lib.sh"
     # systemd --user unit (opt-in)
@@ -60,9 +58,6 @@ package() {
         "$pkgdir/usr/share/polkit-1/rules.d/50-homed-workspace.rules"
     install -Dm644 packaging/homed-workspace.tmpfiles \
         "$pkgdir/usr/lib/tmpfiles.d/homed-workspace.conf"
-    # app launcher for the GUI
-    install -Dm644 desktop/homed-workspace-gui.desktop \
-        "$pkgdir/usr/share/applications/homed-workspace-gui.desktop"
     # tray autostart (XDG autostart for every login session)
     install -Dm644 desktop/homed-workspace-tray.desktop \
         "$pkgdir/etc/xdg/autostart/homed-workspace-tray.desktop"
