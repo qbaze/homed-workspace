@@ -18,12 +18,18 @@ for u in "${drop[@]}"; do xhost "-si:localuser:$u" 2>/dev/null || true; done
 # disable linger first, else systemd resurrects user@UID.service and keeps the
 # home busy, making deactivate fail.
 for u in "${drop[@]}"; do loginctl disable-linger "$u" 2>/dev/null || true; done
+# polite SIGTERM: let the clients' apps save & close
 for u in "${drop[@]}"; do loginctl terminate-user "$u" 2>/dev/null || true; done
-sleep 1
+# wait up to ~8s for processes to exit cleanly before forcing
+for _ in $(seq 1 16); do
+  busy=0
+  for u in "${drop[@]}"; do pgrep -u "$u" >/dev/null 2>&1 && busy=1; done
+  [[ $busy -eq 0 ]] && break
+  sleep 0.5
+done
+# force-kill only those still running
 for u in "${drop[@]}"; do
-  if loginctl list-users --no-legend 2>/dev/null | awk '{print $2}' | grep -qxF "$u"; then
-    loginctl kill-user --signal=SIGKILL "$u" 2>/dev/null || true
-  fi
+  pgrep -u "$u" >/dev/null 2>&1 && loginctl kill-user --signal=SIGKILL "$u" 2>/dev/null || true
 done
 sleep 1
 for u in "${drop[@]}"; do
