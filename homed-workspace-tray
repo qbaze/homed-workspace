@@ -143,7 +143,7 @@ def confirm(text, secondary):
 class Tray:
     def __init__(self):
         self.ind = _ind.Indicator.new(
-            "homed-workspace", "user-group",
+            "homed-workspace", "system-users",
             _ind.IndicatorCategory.APPLICATION_STATUS)
         self.ind.set_status(_ind.IndicatorStatus.ACTIVE)
         self.ind.set_title("Workspace clients")
