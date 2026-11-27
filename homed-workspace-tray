@@ -108,20 +108,50 @@ def switch_ws(name):
     if num is not None:
         sh(["wmctrl", "-s", num])
 
-def windows_of(name):
-    c = 0
+def _win_owner(pid):
+    # username owning the process behind a window pid, or "" if unknown
+    try:
+        with open(f"/proc/{pid}/status") as fh:
+            uid = next((l.split()[1] for l in fh if l.startswith("Uid:")), None)
+    except Exception:
+        return ""
+    if not uid:
+        return ""
+    name = sh(["getent", "passwd", uid]).split(":")[0:1]
+    return name[0] if name else ""
+
+def _iter_windows():
+    # yield (winid, desktop, owner) for every managed window
     for line in sh(["wmctrl", "-l", "-p"]).splitlines():
         f = line.split(None, 4)
         if len(f) < 3 or not f[2].isdigit():
             continue
-        try:
-            with open(f"/proc/{f[2]}/status") as fh:
-                uid = next((l.split()[1] for l in fh if l.startswith("Uid:")), None)
-        except Exception:
+        yield f[0], f[1], _win_owner(f[2])
+
+def windows_of(name):
+    return sum(1 for _wid, _d, owner in _iter_windows() if owner == name)
+
+def ws_name_to_num():
+    m = {}
+    for line in sh(["wmctrl", "-d"]).splitlines():
+        f = line.split(None, 9)
+        if len(f) >= 10:
+            m[f[9].strip()] = f[0]
+    return m
+
+def tidy_windows():
+    # Move every window onto the workspace named after its owning user, so a
+    # client's stray windows return to that client's desktop (and the main
+    # user's to theirs). Windows whose owner has no workspace are left alone.
+    ws = ws_name_to_num()
+    moved = 0
+    for winid, desk, owner in _iter_windows():
+        target = ws.get(owner)
+        if target is None or target == desk:
             continue
-        if uid and sh(["getent", "passwd", uid]).split(":")[0:1] == [name]:
-            c += 1
-    return c
+        sh(["wmctrl", "-i", "-r", winid, "-t", target])
+        moved += 1
+    return moved
 
 def client_state(name):
     for n, st in list_clients():
@@ -209,6 +239,9 @@ class Tray:
             m.append(out)
 
         m.append(Gtk.SeparatorMenuItem())
+        t = Gtk.MenuItem(label="Tidy windows to workspaces")
+        t.connect("activate", lambda *_: self._tidy())
+        m.append(t)
         r = Gtk.MenuItem(label="Refresh"); r.connect("activate", lambda *_: self.rebuild())
         m.append(r)
         q = Gtk.MenuItem(label="Quit"); q.connect("activate", lambda *_: Gtk.main_quit())
@@ -216,6 +249,10 @@ class Tray:
 
         m.show_all()
         self.ind.set_menu(m)
+
+    def _tidy(self):
+        n = tidy_windows()
+        notify(f"moved {n} window(s)" if n else "windows already in place")
 
     def _logout(self, name):
         n = windows_of(name)
