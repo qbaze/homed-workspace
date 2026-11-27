@@ -127,25 +127,13 @@ def do_activate(name, after):
 
 def do_logout(name, after):
     def worker():
-        sh(["loginctl", "disable-linger", name])   # stop systemd resurrecting the user manager
-        sh(["loginctl", "terminate-user", name])   # polite SIGTERM: let apps save & close
-        for _ in range(30):                        # wait up to ~15s for a clean exit
-            if not sh(["pgrep", "-u", name]).strip():
-                break
-            time.sleep(0.5)
-        if sh(["pgrep", "-u", name]).strip():       # still stubborn -> force
-            sh(["loginctl", "kill-user", "--signal=SIGKILL", name]); time.sleep(1)
-        # deactivate can report the home busy right after the session dies; retry.
-        for _ in range(6):
-            if client_state(name) != "active":
-                break
-            sh(["homectl", "deactivate", name], timeout=15)
-            time.sleep(1)
-        if client_state(name) == "active":
-            # still active -> do NOT remove the workspace, report instead
-            GLib.idle_add(notify, f"could not log out {name} (still active)")
+        # deactivation needs root (homed blocks cross-user deactivate); the polkit
+        # rule lets wheel run this helper via pkexec without a password.
+        r = subprocess.run(["pkexec", "/usr/bin/homed-workspace-deactivate", name])
+        if r.returncode == 0:
+            remove_ws(name)        # drop the workspace only on a real deactivation
         else:
-            remove_ws(name)
+            GLib.idle_add(notify, f"could not log out {name}")
         GLib.idle_add(after)
     threading.Thread(target=worker, daemon=True).start()
 

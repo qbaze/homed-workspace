@@ -40,6 +40,7 @@ package() {
     # commands
     install -Dm755 runas                  "$pkgdir/usr/bin/runas"
     install -Dm755 homed-workspace-logout "$pkgdir/usr/bin/homed-workspace-logout"
+    install -Dm755 homed-workspace-deactivate "$pkgdir/usr/bin/homed-workspace-deactivate"
     install -Dm755 homed-workspace-setup  "$pkgdir/usr/bin/homed-workspace-setup"
     install -Dm755 homed-workspace-notify "$pkgdir/usr/bin/homed-workspace-notify"
     install -Dm755 homed-workspace-overlay "$pkgdir/usr/bin/homed-workspace-overlay"

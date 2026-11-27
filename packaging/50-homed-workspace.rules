@@ -13,3 +13,14 @@ polkit.addRule(function(action, subject) {
         return polkit.Result.YES;
     }
 });
+
+// Let `wheel` run the deactivate helper via pkexec without a password.
+// homed only allows root or the home's owner to deactivate a home, so logging a
+// client out from the tray/GUI goes through this small root helper.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.policykit.exec" &&
+        action.lookup("program") == "/usr/bin/homed-workspace-deactivate" &&
+        subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+    }
+});
