@@ -139,6 +139,8 @@ background (xfwm4's compositor is fine). Tunable via environment:
 | `homed-workspace-logout` | tear down client sessions (also runs on your logout) |
 | `homed-workspace-notify` | notify on workspace change (run via the `--user` service) |
 | `homed-workspace-overlay` | persistent workspace-name overlay (run via the `--user` service) |
+| `homed-workspace-tidy [client]` | move drifted client windows back to their workspace (`-n` to preview) |
+| `homed-workspace-tray` | panel tray icon with a dropdown switcher (activate / switch / log out / tidy windows) |
 
 ## Portability
 

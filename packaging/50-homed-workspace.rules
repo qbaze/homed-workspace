@@ -4,10 +4,25 @@
 polkit.addRule(function(action, subject) {
     if (subject.isInGroup("wheel") &&
         (action.id == "org.freedesktop.machine1.shell" ||
+         // `machinectl shell user@.host` (the local host) uses host-shell, not shell
+         action.id == "org.freedesktop.machine1.host-shell" ||
          action.id == "org.freedesktop.machine1.login" ||
          action.id == "org.freedesktop.home1.activate-home" ||
          action.id == "org.freedesktop.home1.deactivate-home" ||
-         action.id == "org.freedesktop.login1.set-user-linger")) {
+         action.id == "org.freedesktop.login1.set-user-linger" ||
+         // terminate-user / kill-user when logging a client out of the tray/GUI
+         action.id == "org.freedesktop.login1.manage")) {
+        return polkit.Result.YES;
+    }
+});
+
+// Let `wheel` run the deactivate helper via pkexec without a password.
+// homed only allows root or the home's owner to deactivate a home, so logging a
+// client out from the tray/GUI goes through this small root helper.
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.policykit.exec" &&
+        action.lookup("program") == "/usr/bin/homed-workspace-deactivate" &&
+        subject.isInGroup("wheel")) {
         return polkit.Result.YES;
     }
 });

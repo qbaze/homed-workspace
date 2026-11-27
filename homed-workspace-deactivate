@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# homed-workspace-deactivate <user> — fully log out and deactivate one homed
+# client's home, AS ROOT. Invoked from the tray/GUI via pkexec (a polkit rule
+# lets `wheel` run it without a password). systemd-homed only lets root or the
+# owner deactivate a home, so this must run privileged — hence the helper.
+#
+# Graceful: disable linger (so systemd won't resurrect the user manager and hold
+# the home busy), SIGTERM, wait for a clean exit, SIGKILL stragglers, then
+# deactivate with a short retry while the home is still busy.
+set -uo pipefail
+u=${1:-}
+[[ -n $u ]] || { echo "usage: homed-workspace-deactivate <user>" >&2; exit 2; }
+
+state() { homectl list --no-legend 2>/dev/null | awk -v U="$u" '$1==U{print $4}'; }
+
+# revoke the X access runas granted to this client (least-privilege cleanup)
+xhost "-si:localuser:$u" 2>/dev/null || true
+
+loginctl disable-linger "$u" 2>/dev/null || true
+loginctl terminate-user "$u" 2>/dev/null || true     # polite SIGTERM
+for _ in $(seq 1 30); do                             # wait up to ~15s for clean exit
+  pgrep -u "$u" >/dev/null 2>&1 || break
+  sleep 0.5
+done
+pgrep -u "$u" >/dev/null 2>&1 && loginctl kill-user --signal=SIGKILL "$u" 2>/dev/null || true
+sleep 1
+
+for _ in $(seq 1 8); do
+  [[ $(state) == active ]] || break
+  homectl deactivate "$u" 2>/dev/null || true
+  sleep 1
+done
+
+[[ $(state) == active ]] && { echo "home for '$u' is still active" >&2; exit 1; }
+exit 0
