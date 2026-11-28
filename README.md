@@ -141,8 +141,32 @@ background (xfwm4's compositor is fine). Tunable via environment:
 | `homed-workspace-logout` | tear down client sessions (also runs on your logout) |
 | `homed-workspace-notify` | notify on workspace change (run via the `--user` service) |
 | `homed-workspace-overlay` | persistent workspace-name overlay (run via the `--user` service) |
+| `homed-workspace-timetrack` | per-client time tracking (timewarrior) on workspace switch (`--user` service) |
 | `homed-workspace-tidy [client]` | move drifted client windows back to their workspace (`-n` to preview) |
 | `homed-workspace-tray` | panel tray icon with a dropdown switcher (activate / switch / log out / tidy windows) |
+
+## Time tracking (optional)
+
+`homed-workspace-timetrack` clocks your time per client using
+[timewarrior](https://timewarrior.net/): switch onto a client's workspace and it
+runs `timew start <client>`, switch away and it stops. The data lives in **your**
+`~/.timewarrior`, never in a client home, so it survives `homectl remove` and
+stays private to you.
+
+```sh
+sudo pacman -S timewarrior xorg-xprintidle   # xprintidle enables idle-stop
+systemctl --user enable --now homed-workspace-timetrack.service
+```
+
+Tune via environment (unit drop-in or `~/.config/environment.d/*.conf`):
+`HW_TIMETRACK_IDLE` (pause after N idle seconds on X11; `0` disables),
+`HW_TIMETRACK_IGNORE` (space-separated workspaces to never track),
+`HW_TIMETRACK_POLL` (switch granularity, seconds).
+
+The tray shows the running timer and a today summary. Bill from timewarrior
+directly, e.g. `timew summary :month <client>`. Note: "Stop tracking" in the tray
+is undone within one poll if you're still on that client's workspace (the service
+re-detects it) — it's for manual mode or when you're off any client workspace.
 
 ## Portability
 

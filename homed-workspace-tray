@@ -3,7 +3,7 @@
 # clients: click it to activate / switch / log out clients. Workspaces are
 # dynamic (activating creates the workspace, logging out removes it). Meant to
 # autostart in your session and sit in the XFCE panel's notification area.
-import gi, os, getpass, subprocess, threading, time
+import gi, os, getpass, subprocess, threading, time, re, shutil
 gi.require_version("Gtk", "3.0")
 # AppIndicator: prefer the maintained Ayatana fork, fall back to the old one.
 _ind = None
@@ -161,6 +161,24 @@ def client_state(name):
             return st
     return ""
 
+# --- timewarrior status (optional; set up by homed-workspace-timetrack) -------
+def _fmt_dur(iso):
+    # ISO8601 duration (PT1H2M3S) -> "1:02" or "2m"
+    m = re.match(r"P(?:\d+D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", iso or "")
+    if not m:
+        return ""
+    h, mi, _s = (int(x) if x else 0 for x in m.groups())
+    return f"{h}:{mi:02d}" if h else f"{mi}m"
+
+def timew_status():
+    # ("client", "1:02") while an interval is open, else (None, None)
+    if not shutil.which("timew"):
+        return (None, None)
+    if sh(["timew", "get", "dom.active"]).strip() != "1":
+        return (None, None)
+    tag = sh(["timew", "get", "dom.active.tag.1"]).strip().strip('"')
+    return (tag or "?", _fmt_dur(sh(["timew", "get", "dom.active.duration"]).strip()))
+
 # --- actions (slow bits off the main loop) -----------------------------------
 def do_activate(name, after):
     subprocess.Popen(["xfce4-terminal", "-T", f"activate {name}",
@@ -212,6 +230,17 @@ class Tray:
 
     def rebuild(self):
         m = Gtk.Menu()
+
+        # time tracking status (if timewarrior + the timetrack service are set up)
+        tag, dur = timew_status()
+        if tag:
+            ti = Gtk.MenuItem(label=f"⏱  {tag}  —  {dur}"); ti.set_sensitive(False)
+            m.append(ti)
+            stop = Gtk.MenuItem(label="Stop tracking")
+            stop.connect("activate", lambda *_: (sh(["timew", "stop"]), self.rebuild()))
+            m.append(stop)
+            m.append(Gtk.SeparatorMenuItem())
+
         clients = list_clients()
         if not clients:
             mi = Gtk.MenuItem(label="(no homed clients)"); mi.set_sensitive(False)
@@ -244,6 +273,11 @@ class Tray:
         t = Gtk.MenuItem(label="Tidy windows to workspaces")
         t.connect("activate", lambda *_: self._tidy())
         m.append(t)
+        if shutil.which("timew"):
+            ts = Gtk.MenuItem(label="Time summary (today)")
+            ts.connect("activate", lambda *_: subprocess.Popen(
+                ["xfce4-terminal", "--hold", "-x", "timew", "summary", ":day"]))
+            m.append(ts)
         r = Gtk.MenuItem(label="Refresh"); r.connect("activate", lambda *_: self.rebuild())
         m.append(r)
         q = Gtk.MenuItem(label="Quit"); q.connect("activate", lambda *_: Gtk.main_quit())

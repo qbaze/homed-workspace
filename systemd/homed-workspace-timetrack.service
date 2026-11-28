@@ -1,0 +1,19 @@
+[Unit]
+Description=homed-workspace: per-client time tracking (timewarrior) on workspace switch
+# See homed-workspace-notify.service for why this is default.target, not
+# graphical-session.target (XFCE does not start the latter).
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/homed-workspace-timetrack
+# Tune tracking here if you like (or in ~/.config/environment.d/*.conf):
+#   Environment=HW_TIMETRACK_IDLE=900
+#   Environment=HW_TIMETRACK_IGNORE=hero scratch
+# The script waits for X and exits non-zero if it cannot attach, so systemd keeps
+# retrying until the session exists.
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

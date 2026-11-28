@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# homed-workspace-timetrack — per-client time tracking tied to workspace switches.
+# Timewarrior tags each interval with the client (= the workspace / home name) you
+# are on: switch onto a client's workspace and the clock starts for that client,
+# switch away and it stops. Data lives in YOUR (the main user's) ~/.timewarrior,
+# never in a client home — so it survives `homectl remove` and stays private to
+# you. Meant to run as a `systemctl --user` service (opt-in), like notify/overlay.
+#
+# Config (env — set in the unit, ~/.config/environment.d/*.conf, or a drop-in):
+#   HW_TIMETRACK_POLL=5       seconds between checks (switch granularity)
+#   HW_TIMETRACK_IDLE=600     pause tracking after this many idle seconds
+#                             (X11 only, needs xprintidle); 0 disables idle-stop
+#   HW_TIMETRACK_IGNORE=""    space-separated workspace names to never track
+set -uo pipefail
+
+_LIB=/usr/lib/homed-workspace/lib.sh
+[[ -r $_LIB ]] || _LIB="$(dirname "$(readlink -f "$0")")/lib/lib.sh"
+# shellcheck source=/dev/null
+source "$_LIB"   # is_client, current_ws
+
+command -v timew >/dev/null 2>&1 || {
+  echo "timetrack: timewarrior (timew) is not installed" >&2; exit 1; }
+
+POLL=${HW_TIMETRACK_POLL:-5}
+IDLE_MAX=${HW_TIMETRACK_IDLE:-600}
+IGNORE=" ${HW_TIMETRACK_IGNORE:-} "   # padded so *" name "* matching is exact
+
+# --- attach to the graphical session (wmctrl/xdotool/xprintidle need DISPLAY) --
+# The user manager often starts before X and without DISPLAY/XAUTHORITY; discover
+# them and exit non-zero if X isn't up yet (Restart=always makes systemd retry).
+if [[ -z ${WAYLAND_DISPLAY:-} && -z ${SWAYSOCK:-} ]]; then
+  if [[ -z ${DISPLAY:-} ]]; then
+    for s in /tmp/.X11-unix/X*; do [[ -S $s ]] && { export DISPLAY=":${s##*/X}"; break; }; done
+  fi
+  [[ -n ${DISPLAY:-} ]] || { echo "no X display yet; will retry" >&2; exit 1; }
+  if [[ -z ${XAUTHORITY:-} || ! -r ${XAUTHORITY:-} ]]; then
+    for c in "$XDG_RUNTIME_DIR"/xauth_* "$HOME/.Xauthority"; do
+      [[ -r $c ]] && { export XAUTHORITY="$c"; break; }
+    done
+  fi
+fi
+
+me=$(id -un)
+cur_tag=""
+
+idle_s() {  # idle seconds, or 0 when idle-stop is off / unavailable
+  [[ $IDLE_MAX -gt 0 ]] && command -v xprintidle >/dev/null 2>&1 || { echo 0; return; }
+  echo $(( $(xprintidle 2>/dev/null || echo 0) / 1000 ))
+}
+start_tag() { timew start "$1" >/dev/null 2>&1 && cur_tag=$1; }
+stop_tag()  { timew stop      >/dev/null 2>&1; cur_tag=""; }
+
+# Reconcile with any interval already open, so a restart doesn't fragment it.
+if [[ $(timew get dom.active 2>/dev/null) == 1 ]]; then
+  cur_tag=$(timew get dom.active.tag.1 2>/dev/null | tr -d '"')
+fi
+
+# Stop the open interval cleanly when the service is stopped (e.g. at logout),
+# so time doesn't keep accruing after the session ends.
+trap 'stop_tag; exit 0' TERM INT
+
+while :; do
+  ws=$(current_ws 2>/dev/null || true)
+
+  target=""
+  if [[ -n $ws && $ws != "$me" && $IGNORE != *" $ws "* ]] && is_client "$ws"; then
+    target=$ws
+  fi
+
+  if [[ $IDLE_MAX -gt 0 && -n $target && $(idle_s) -ge $IDLE_MAX ]]; then
+    [[ -n $cur_tag ]] && stop_tag           # idle on a client ws -> pause
+  elif [[ -n $target ]]; then
+    [[ $target != "$cur_tag" ]] && start_tag "$target"   # active -> time this client
+  else
+    [[ -n $cur_tag ]] && stop_tag           # off any client ws -> stop
+  fi
+
+  sleep "$POLL"
+done

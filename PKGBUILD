@@ -13,6 +13,8 @@ depends=('bash' 'systemd' 'polkit' 'wmctrl' 'xorg-xhost' 'xfce4-terminal'
 optdepends=('pipewire-pulse: shared audio socket for client sessions (auto-configured)'
             'xorg-xprop: event-driven workspace notifications on X11 (else polling)'
             'xdotool: more robust active-workspace detection on X11'
+            'timewarrior: per-client time tracking (homed-workspace-timetrack)'
+            'xorg-xprintidle: idle-stop for time tracking on X11'
             'sway: workspace detection & notifications on Sway'
             'hyprland: workspace detection on Hyprland')
 makedepends=('git')
@@ -48,6 +50,7 @@ package() {
     install -Dm755 homed-workspace-overlay "$pkgdir/usr/bin/homed-workspace-overlay"
     install -Dm755 homed-workspace-tray   "$pkgdir/usr/bin/homed-workspace-tray"
     install -Dm755 homed-workspace-tidy   "$pkgdir/usr/bin/homed-workspace-tidy"
+    install -Dm755 homed-workspace-timetrack "$pkgdir/usr/bin/homed-workspace-timetrack"
     # shared library
     install -Dm644 lib/lib.sh "$pkgdir/usr/lib/homed-workspace/lib.sh"
     # systemd --user unit (opt-in)
@@ -55,6 +58,8 @@ package() {
         "$pkgdir/usr/lib/systemd/user/homed-workspace-notify.service"
     install -Dm644 systemd/homed-workspace-overlay.service \
         "$pkgdir/usr/lib/systemd/user/homed-workspace-overlay.service"
+    install -Dm644 systemd/homed-workspace-timetrack.service \
+        "$pkgdir/usr/lib/systemd/user/homed-workspace-timetrack.service"
     # system integration files
     install -Dm644 packaging/50-homed-workspace.rules \
         "$pkgdir/usr/share/polkit-1/rules.d/50-homed-workspace.rules"
